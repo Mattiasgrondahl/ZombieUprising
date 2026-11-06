@@ -148,6 +148,44 @@ local function progressionModule(): any?
 	return nil
 end
 
+local function resolveSibling(name: string): any?
+	local ok, mod = pcall(function()
+		local systems = ReplicatedStorage:FindFirstChild("Systems")
+		if not systems then
+			return nil
+		end
+		local m = systems:FindFirstChild(name)
+		if not m then
+			return nil
+		end
+		return require(m)
+	end)
+	if ok and mod then
+		return mod
+	end
+	return nil
+end
+
+-- Best-effort chat announcement; never blocks gameplay.
+local function announce(kind: string, player: Player, extra: any?)
+	pcall(function()
+		local chatSys = resolveSibling("Chat")
+		if not chatSys then
+			return
+		end
+		local fn: any = (chatSys :: any)[kind]
+		if type(fn) ~= "function" then
+			return
+		end
+		local g: any = fn
+		if extra ~= nil then
+			g(tostring(player.DisplayName), extra)
+		else
+			g(tostring(player.DisplayName))
+		end
+	end)
+end
+
 local function notify(player: Player, text: string)
 	pcall(function()
 		Remotes.Notify():FireClient(player, text)
@@ -262,6 +300,7 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 		pcall(function()
 			Remotes.Notify():FireAllClients(tostring(player.DisplayName) .. " restored the power!")
 		end)
+		announce("PowerRestored", player, nil)
 		return true, nil
 	end
 
@@ -357,15 +396,27 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 		if not spendCoins(player, P.PackAPunchCost) then
 			return false, "InsufficientFunds"
 		end
-		local okDone = pcall(function()
-			if type(prog.PackAPunch) == "function" then
-				local pap: any = prog.PackAPunch
-				local pf: any = pap
-				pf(prog, player)
+		-- Verify the upgrade actually applied; otherwise the player would be
+		-- charged 5000 coins for nothing.
+		local applied: boolean = false
+		pcall(function()
+			local pap: any = prog.PackAPunch
+			if type(pap) ~= "function" then
+				return
 			end
-			notify(player, "Pack-a-Punch! Damage doubled.")
+			local pf: any = pap
+			local gok, res = pcall(function()
+				return pf(prog, player)
+			end)
+			applied = gok and res ~= false
+			if applied then
+				notify(player, "Pack-a-Punch! Damage boosted.")
+			end
 		end)
-		return okDone, nil
+		if not applied then
+			return false, "Unavailable"
+		end
+		return true, nil
 	end
 
 	if string.sub(machineId, 1, 5) == "Trap_" then

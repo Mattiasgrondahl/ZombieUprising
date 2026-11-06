@@ -30,23 +30,25 @@ Config.Wave = {
 -- Player
 ----------------------------------------------------------------------
 Config.Player = {
-	BaseMaxHealth = 100,
+	BaseMaxHealth = 125,
 	BaseWalkSpeed = 16,
-	SprintSpeed = 26,
+	SprintSpeed = 24,
 	RespawnDelay = 5,
 	StartingCoins = 0,
-	InvulnerabilityAfterSpawn = 2.5,
+	InvulnerabilityAfterSpawn = 3.0,
 	-- Health at/below which a player is knocked down instead of killed.
 	DownedThreshold = 1,
+	-- Brief mercy window after being revived.
+	ReviveInvulnerability = 2.5,
 }
 
 ----------------------------------------------------------------------
 -- Economy
 ----------------------------------------------------------------------
 Config.Economy = {
-	CoinPerKill = 8,
-	CoinPerHeadshot = 14,
-	CoinPerWaveClear = 50,
+	CoinPerKill = 10,
+	CoinPerHeadshot = 20,
+	CoinPerWaveClear = 75,
 	CoinWaveMultiplier = 1.0,
 	XPPerKill = 10,
 	XPPerWaveClear = 75,
@@ -342,8 +344,8 @@ Config.Map = {
 	-- until opened. Zone 1 is always open.
 	ZoneCount = 4,
 	ZoneWidth = 65,           -- depth of each zone along Z
-	DoorCost = 500,           -- base cost; later doors cost more
-	DoorCostGrowth = 1.6,
+	DoorCost = 400,           -- base cost; later doors cost more
+	DoorCostGrowth = 1.5,
 	DoorThickness = 3,
 }
 

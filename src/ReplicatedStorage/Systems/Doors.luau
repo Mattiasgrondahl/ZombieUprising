@@ -27,6 +27,25 @@ local function doorsFolder(): Instance?
 	return map:FindFirstChild("Doors")
 end
 
+-- Safely resolves a sibling Systems module; returns nil when absent.
+local function findSibling(name: string): any?
+	local ok, mod = pcall(function()
+		local systems = ReplicatedStorage:FindFirstChild("Systems")
+		if not systems then
+			return nil
+		end
+		local m = systems:FindFirstChild(name)
+		if not m then
+			return nil
+		end
+		return require(m)
+	end)
+	if ok and mod then
+		return mod
+	end
+	return nil
+end
+
 local function findDoor(index: number): Instance?
 	local folder = doorsFolder()
 	if not folder then
@@ -128,6 +147,15 @@ function Doors.TryOpen(player: Player, index: number): (boolean, string?)
 		Remotes.Notify():FireAllClients(
 			string.format("%s opened the way to zone %d!", player.DisplayName, index + 1)
 		)
+	end)
+
+	pcall(function()
+		local chatSys = findSibling("Chat")
+		if chatSys and type(chatSys.DoorOpened) == "function" then
+			local fn: any = chatSys.DoorOpened
+			local g: any = fn
+			g(tostring(player.DisplayName), index + 1)
+		end
 	end)
 
 	return true, nil

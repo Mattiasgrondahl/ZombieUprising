@@ -430,6 +430,7 @@ end
 ------------------------------------------------------------------------------
 
 local respawnLocks: { [string]: boolean } = {}
+local recentlyResolved: { [string]: boolean } = {}
 
 -- Applies perk-derived health to a freshly spawned character. Safe to call even
 -- when the character does not exist yet.
@@ -480,6 +481,15 @@ local function endRun(player: Player, wave: number)
 			Kills = run.Kills,
 			Reason = "OutOfLives",
 		})
+	end)
+end
+
+-- Marks a death as already handled so a duplicate revive cannot eat two lives.
+function Progression.MarkDeathResolved(player: Player)
+	local key = playerKey(player)
+	recentlyResolved[key] = true
+	task.delay(3.0, function()
+		recentlyResolved[key] = nil
 	end)
 end
 
@@ -545,6 +555,11 @@ function Progression.Init()
 	Remotes.RequestRespawn().OnServerEvent:Connect(function(player: Player)
 		local key = playerKey(player)
 		if respawnLocks[key] then
+			return
+		end
+		-- Guard: a bleed-out already resolved this death via the Downed system.
+		-- Without this, a late client request would consume a second life.
+		if recentlyResolved[key] then
 			return
 		end
 		respawnLocks[key] = true

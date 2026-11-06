@@ -119,6 +119,27 @@ function Chat.WaveCleared(waveNumber: number)
 	Chat.System(string.format("Wave %d cleared. Spend your coins!", waveNumber))
 end
 
+-- Tier 1-3 announcements so players understand the new systems.
+function Chat.PowerRestored(name: string)
+	Chat.System(string.format("⚡ %s restored the power! Machines are online.", name))
+end
+
+function Chat.DoorOpened(name: string, zone: number)
+	Chat.System(string.format("🚪 %s opened the way to zone %d.", name, zone))
+end
+
+function Chat.MachineUsed(name: string, machine: string)
+	Chat.System(string.format("%s used %s.", name, machine))
+end
+
+function Chat.Downed(name: string)
+	Chat.System(string.format("💀 %s is DOWN! Get to them!", name))
+end
+
+function Chat.Revived(helper: string, target: string)
+	Chat.System(string.format("❤️ %s revived %s!", helper, target))
+end
+
 function Chat.ShopOpen(seconds: number)
 	Chat.System(string.format("Shop open — %d seconds until the next wave.", seconds))
 end

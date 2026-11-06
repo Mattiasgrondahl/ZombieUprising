@@ -77,6 +77,36 @@ local function notify(player: Player, text: string)
 	end)
 end
 
+-- Best-effort chat announcement via the Chat system.
+local function chatAnnounce(kind: string, a: string, b: string?)
+	pcall(function()
+		local systems = ReplicatedStorage:FindFirstChild("Systems")
+		if not systems then
+			return
+		end
+		local m = systems:FindFirstChild("Chat")
+		if not m then
+			return
+		end
+		local ok, chat = pcall(function()
+			return require(m)
+		end)
+		if not ok or not chat then
+			return
+		end
+		local fn: any = (chat :: any)[kind]
+		if type(fn) ~= "function" then
+			return
+		end
+		local g: any = fn
+		if b ~= nil then
+			g(a, b)
+		else
+			g(a)
+		end
+	end)
+end
+
 local function setDownedFlag(player: Player, value: boolean)
 	pcall(function()
 		player:SetAttribute("Downed", value)
@@ -115,6 +145,16 @@ local function endRunFor(player: Player)
 	if not mod then
 		return
 	end
+	-- Tell Progression this death is resolved so RequestRespawn cannot double
+	-- charge a life.
+	pcall(function()
+		local prog = require(mod)
+		if type(prog.MarkDeathResolved) == "function" then
+			local fn: any = prog.MarkDeathResolved
+			local g: any = fn
+			g(prog, player)
+		end
+	end)
 	pcall(function()
 		local prog = require(mod)
 		if type(prog.EndRun) == "function" then
@@ -203,6 +243,7 @@ function Downed.KnockDown(player: Player)
 	}
 	setDownedFlag(player, true)
 	notifyAll(string.format("%s is DOWN! Revive them!", player.DisplayName))
+	chatAnnounce("Downed", tostring(player.DisplayName), nil)
 
 	-- Keep them alive at low health and immobile, so they can be revived.
 	-- Without restoring health the humanoid would simply die.
@@ -239,6 +280,7 @@ function Downed.Revive(player: Player, helper: any)
 
 	if helper then
 		notifyAll(string.format("%s revived %s!", tostring(helper.DisplayName), tostring(player.DisplayName)))
+		chatAnnounce("Revived", tostring(helper.DisplayName), tostring(player.DisplayName))
 	else
 		notifyAll(tostring(player.DisplayName) .. " was revived.")
 	end
