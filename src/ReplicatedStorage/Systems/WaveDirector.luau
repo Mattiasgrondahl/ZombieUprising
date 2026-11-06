@@ -72,6 +72,8 @@ export type WaveState = {
 
 local WaveDirector = {}
 
+local Effects = require(script.Parent.Effects)
+
 local PHASE_INTERMISSION = "Intermission"
 local PHASE_ACTIVE = "Active"
 local PHASE_ENDED = "Ended"
@@ -489,6 +491,12 @@ local function runWave(waveNumber: number)
 			else
 				string.format("Wave %d started", waveNumber)
 		)
+	end)
+
+	-- Audio + screen tint so a wave start is unmistakable.
+	pcall(function()
+		Effects.PlaySound("WaveStart", 0.7, if isBoss then 0.75 else 1)
+		Effects.WaveStartFlash()
 	end)
 
 	clearTracking()

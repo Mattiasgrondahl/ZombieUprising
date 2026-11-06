@@ -208,6 +208,53 @@ local function buildSpawnPoints(root: Folder, m: MapSettings)
 	end
 end
 
+-- Low-lying fog banks + wall lamps to make the arena feel alive and lit.
+local function buildAmbience(root: Folder, m: MapSettings, rand: Random)
+	local half: number = m.ArenaSize / 2 - 12
+	local f = Instance.new("Folder")
+	f.Name = "Ambience"
+	f.Parent = root
+
+	for i = 1, 8 do
+		local angle = (i / 8) * math.pi * 2
+		local x = math.cos(angle) * (half - 4)
+		local z = math.sin(angle) * (half - 4)
+
+		local lamp = newPart({
+			Name = "Lamp_" .. i,
+			Size = Vector3.new(1.5, 1.5, 1.5),
+			Position = Vector3.new(x, 12, z),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(255, 170, 90),
+			Transparency = 0.15,
+		})
+		lamp.Parent = f
+
+		local light = Instance.new("PointLight")
+		light.Name = "ZA_LampLight"
+		light.Range = 70
+		light.Brightness = 1.6
+		light.Color = Color3.fromRGB(255, 175, 100)
+		light.Shadows = true
+		light.Parent = lamp
+	end
+
+	for i = 1, 10 do
+		local px = rand:Range(-half, half)
+		local pz = rand:Range(-half, half)
+		local size = rand:Range(20, 45)
+		local patch = newPart({
+			Name = "Fog_" .. i,
+			Size = Vector3.new(size, 0.4, size),
+			Position = Vector3.new(px, 0.5, pz),
+			Material = Enum.Material.SmoothPlastic,
+			Color = Color3.fromRGB(80, 86, 104),
+			Transparency = 0.72,
+		})
+		patch.Parent = f
+	end
+end
+
 local function buildPlayerSpawn(_m: MapSettings)
 	local ws: Workspace = game:GetService("Workspace")
 	local old = ws:FindFirstChild("PlayerSpawnPad")
@@ -282,6 +329,7 @@ function MapBuilder.Build(): Folder
 	buildWalls(root, m)
 	buildCover(root, m, rand)
 	buildBarrels(root, m, rand)
+	buildAmbience(root, m, rand)
 	buildSpawnPoints(root, m)
 	buildPlayerSpawn(m)
 	buildLighting()

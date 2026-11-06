@@ -17,11 +17,11 @@ Config.Wave = {
 	SpawnBatchInterval = 0.75,  -- stagger spawns within a wave
 	BossEveryNWaves = 5,
 	BaseZombieCount = 6,
-	CountGrowthPerWave = 2.2,
-	HPScalePerWave = 1.18,
-	SpeedScalePerWave = 1.012,
-	MaxSpeedScale = 1.45,
-	DamageScalePerWave = 1.08,
+	CountGrowthPerWave = 3.4,
+	HPScalePerWave = 1.09,
+	SpeedScalePerWave = 1.02,
+	MaxSpeedScale = 1.75,
+	DamageScalePerWave = 1.05,
 }
 
 ----------------------------------------------------------------------
@@ -48,6 +48,8 @@ Config.Economy = {
 	XPPerWaveClear = 75,
 	XPLevelCurveBase = 100,
 	XPLevelCurveGrowth = 1.35,
+	-- Perk cost multiplier applied per stack already owned.
+	PerkCostGrowth = 1.45,
 }
 
 ----------------------------------------------------------------------
@@ -75,7 +77,7 @@ local Zombies: { [string]: ZombieArchetype } = {
 		Id = "Walker",
 		DisplayName = "Walker",
 		Health = 60,
-		WalkSpeed = 8,
+		WalkSpeed = 12,
 		Damage = 12,
 		AttackRange = 4.5,
 		AttackCooldown = 1.2,

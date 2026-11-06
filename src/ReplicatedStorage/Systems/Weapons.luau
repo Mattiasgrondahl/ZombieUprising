@@ -77,6 +77,8 @@ type EconomyApi = {
 
 local Weapons = {}
 
+local Effects = require(script.Parent.Effects)
+
 local Players = game:GetService("Players")
 
 local WeaponsConfig: { [string]: WeaponDef } = Config.Weapons :: { [string]: WeaponDef }
@@ -597,6 +599,10 @@ local function beginReload(player: Player, entry: WeaponEntry)
 	entry.ReloadEndsAt = nowTime() + reloadTime
 	Weapons.Replicate(player)
 
+	pcall(function()
+		Effects.PlaySound("Reload", 0.4, 1)
+	end)
+
 	task.delay(reloadTime, function()
 		-- Player may have left mid-reload.
 		if entries[player] ~= entry then
@@ -642,6 +648,12 @@ local function castRay(player: Player, entry: WeaponEntry, def: WeaponDef, origi
 	params.IgnoreWater = true
 
 	local scaledDir: any = direction
+	-- Muzzle flash + report at the shooter's origin.
+	pcall(function()
+		Effects.MuzzleFlash(originPos)
+		Effects.PlaySound("Gunshot", 0.5, 0.95 + math.random() * 0.12)
+	end)
+
 	local result: any = workspace:Raycast(originPos, (scaledDir * def.Range) :: Vector3, params)
 	if not result then
 		return false, false, 0
@@ -672,6 +684,18 @@ local function castRay(player: Player, entry: WeaponEntry, def: WeaponDef, origi
 	if died then
 		rewardKill(player, model, headshot)
 	end
+
+	-- Visual/audio feedback: blood on hit, burst + growl on kill.
+	pcall(function()
+		local hitPos: Vector3 = result.Position
+		Effects.BloodBurst(hitPos)
+		if died then
+			Effects.DeathBurst(hitPos)
+			Effects.PlaySound("ZombieGrowl", 0.35, 0.9 + math.random() * 0.3)
+		else
+			Effects.PlaySound("Hit", 0.25, 1)
+		end
+	end)
 
 	pcall(function()
 		Remotes.DamageDealt():FireClient(player, {

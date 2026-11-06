@@ -340,7 +340,10 @@ function Progression.PurchasePerk(player: Player, perkId: string): PurchaseResul
 		return { Ok = false, Reason = "MaxStacks" }
 	end
 
-	local cost: number = def.Cost
+	-- Cost grows per stack already owned so players must commit to a build
+	-- instead of trivially maxing every perk once the economy ramps up.
+	local owned: number = run.Perks[perkId] or 0
+	local cost: number = math.floor(def.Cost * (Config.Economy.PerkCostGrowth ^ owned) + 0.5)
 	if coinsOf(player) < cost then
 		notify(player, "Not enough coins for " .. def.DisplayName)
 		return { Ok = false, Reason = "InsufficientFunds" }
