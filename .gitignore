@@ -2,6 +2,8 @@
 build/
 *.rbxl
 *.rbxlx
+# The shipped place file IS a deliverable -> published as a GitHub Release asset.
+# Kept out of git tree on purpose (large generated artifact).
 
 # Vendored tooling
 tools/bin/
