@@ -1,9 +1,8 @@
 # Build output
-build/
 *.rbxl
 *.rbxlx
-# The shipped place file IS a deliverable -> published as a GitHub Release asset.
-# Kept out of git tree on purpose (large generated artifact).
+# The shipped place file is tracked on purpose so it can be downloaded
+# directly from the repo. Rebuild it any time: make build
 
 # Vendored tooling
 tools/bin/
