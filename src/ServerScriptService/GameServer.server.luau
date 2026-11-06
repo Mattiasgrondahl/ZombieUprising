@@ -90,6 +90,7 @@ local zombieAI: any = startSystem("ZombieAI")
 local economy: any = startSystem("Economy")
 local progression: any = startSystem("Progression")
 local weapons: any = startSystem("Weapons")
+local _chatSystem: any = startSystem("Chat")
 
 -- Cross-system wiring: weapons need to damage zombies.
 if weapons and zombieAI then
@@ -248,5 +249,17 @@ game:BindToClose(function()
 	end
 	task.wait(1)
 end)
+
+-- Enable chat commands (!wave, !perks, !help) once systems are up.
+do
+	local _ci: any = _chatSystem
+	if _ci and type(_ci.Init) == "function" then
+		local _ciInit: any = _ci.Init
+		pcall(function()
+			local g: any = _ciInit
+			g()
+		end)
+	end
+end
 
 trace(string.format("%s v%s boot complete", Config.GameName, Config.Version))

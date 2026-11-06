@@ -32,6 +32,7 @@ type WaveSettings = {
 	IntermissionTime: number,
 	FirstWaveDelay: number,
 	MaxConcurrentZombies: number,
+	MultiplayerCountScale: number,
 	SpawnBatchInterval: number,
 	BossEveryNWaves: number,
 	BaseZombieCount: number,
@@ -71,6 +72,8 @@ export type WaveState = {
 }
 
 local WaveDirector = {}
+
+local Chat = require(script.Parent.Chat)
 
 local Effects = require(script.Parent.Effects)
 
@@ -201,6 +204,17 @@ function WaveDirector.ZombieCountForWave(waveNumber: number): number
 	local base: number = w.BaseZombieCount
 	local growth: number = w.CountGrowthPerWave
 	local raw = base + math.floor((n - 1) * growth)
+
+	-- Multiplayer scaling: more players means more zombies so co-op stays
+	-- challenging. Sub-linear so four players is not four times the chaos.
+	pcall(function()
+		local count = #Players:GetPlayers()
+		if count > 1 then
+			local scale: number = 1 + (w.MultiplayerCountScale * (count - 1))
+			raw = math.floor(raw * scale + 0.5)
+		end
+	end)
+
 	local cap: number = w.MaxConcurrentZombies
 	if raw > cap then
 		raw = cap
@@ -499,6 +513,10 @@ local function runWave(waveNumber: number)
 		Effects.WaveStartFlash()
 	end)
 
+	pcall(function()
+		Chat.WaveStart(waveNumber, isBoss)
+	end)
+
 	clearTracking()
 
 	-- Bosses first so they are on the field for the whole wave.
@@ -553,6 +571,10 @@ local function runWave(waveNumber: number)
 	awardWaveClear(waveNumber)
 	pcall(function()
 		Remotes.Notify():FireAllClients(string.format("Wave %d cleared", waveNumber))
+	end)
+
+	pcall(function()
+		Chat.WaveCleared(waveNumber)
 	end)
 	return true
 end

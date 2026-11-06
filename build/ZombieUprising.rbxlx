@@ -28,6 +28,8 @@ Config.Wave = {
 	MaxConcurrentZombies = 60,  -- hard ceiling for perf safety
 	SpawnBatchInterval = 0.75,  -- stagger spawns within a wave
 	BossEveryNWaves = 5,
+	-- Extra zombies per additional player (sub-linear).
+	MultiplayerCountScale = 0.65,
 	BaseZombieCount = 6,
 	CountGrowthPerWave = 3.4,
 	HPScalePerWave = 1.09,
@@ -693,6 +695,251 @@ return Types
       </Properties>
       <Item class="ModuleScript" referent="8">
         <Properties>
+          <string name="Name">Chat</string>
+          <string name="Source"><![CDATA[--!strict
+-- In-game chat integration for multiplayer.
+--
+-- Roblox chat is handled by either TextChatService (new) or ChatService
+-- (legacy). Both are supported here so chat works regardless of the place's
+-- ChatVersion setting. Everything is pcall-guarded: if chat is unavailable the
+-- game still runs, just without these extras.
+--
+-- Features:
+--   * System announcements broadcast to all players (wave start, boss, etc.)
+--   * Coloured kill/death messages
+--   * Wave and shop notifications delivered through the chat channel
+--   * Optional commands: !wave, !perks, !help
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Chat = {}
+
+local Players = game:GetService("Players")
+
+-- Resolved lazily because services may not be ready at require time.
+local function getTextChatService(): any?
+	local ok, svc = pcall(function()
+		return game:GetService("TextChatService")
+	end)
+	if ok and svc then
+		return svc
+	end
+	return nil
+end
+
+local function getChatService(): any?
+	local ok, svc = pcall(function()
+		return game:GetService("Chat")
+	end)
+	if ok and svc then
+		return svc
+	end
+	return nil
+end
+
+-- Finds the first general-purpose text channel under TextChatService.
+local function generalChannel(tcs: any): any?
+	local ok, ch = pcall(function()
+		return tcs:WaitForChild("TextChannels", 3)
+	end)
+	if not ok or not ch then
+		return nil
+	end
+	local okFind, general = pcall(function()
+		return ch:FindFirstChild("RBXGeneral")
+	end)
+	if okFind and general then
+		return general
+	end
+	-- Fall back to any child TextChannel.
+	local okAny, first = pcall(function()
+		return ch:FindFirstChildOfClass("TextChannel")
+	end)
+	if okAny then
+		return first
+	end
+	return nil
+end
+
+----------------------------------------------------------------------
+-- Public API
+----------------------------------------------------------------------
+
+-- Sends a system-styled message to every player's chat.
+function Chat.System(text: string)
+	pcall(function()
+		local tcs = getTextChatService()
+		if tcs then
+			local ch = generalChannel(tcs)
+			if ch then
+				ch:DisplaySystemMessage(text)
+				return
+			end
+		end
+		local legacy = getChatService()
+		if legacy then
+			legacy:Chat(game:GetService("Workspace"), text, Enum.ChatColor.Blue)
+		end
+	end)
+end
+
+-- Sends a message attributed to a specific player (e.g. kill feed).
+function Chat.FromPlayer(player: Player, text: string)
+	pcall(function()
+		local tcs = getTextChatService()
+		if tcs then
+			local ok = pcall(function()
+				tcs:DisplayBubble(player.Character, text)
+			end)
+			if ok then
+				return
+			end
+		end
+	end)
+end
+
+-- Broadcasts a formatted kill announcement.
+function Chat.Kill(killerName: string, zombieName: string, headshot: boolean)
+	local suffix = if headshot then " (HEADSHOT)" else ""
+	Chat.System(string.format("%s eliminated %s%s", killerName, zombieName, suffix))
+end
+
+-- Wave announcements, the most visible use of chat in play.
+function Chat.WaveStart(waveNumber: number, isBoss: boolean)
+	if isBoss then
+		Chat.System(string.format("⚠ WAVE %d — BOSS INCOMING. Hold the line.", waveNumber))
+	else
+		Chat.System(string.format("Wave %d incoming. Good luck.", waveNumber))
+	end
+end
+
+function Chat.WaveCleared(waveNumber: number)
+	Chat.System(string.format("Wave %d cleared. Spend your coins!", waveNumber))
+end
+
+function Chat.ShopOpen(seconds: number)
+	Chat.System(string.format("Shop open — %d seconds until the next wave.", seconds))
+end
+
+----------------------------------------------------------------------
+-- Simple commands
+----------------------------------------------------------------------
+local Commands: { [string]: (Player) -> string } = {}
+
+function Commands.help(_player: Player): string
+	return "Commands: !wave  !perks  !help"
+end
+
+function Commands.wave(_player: Player): string
+	local wd = ReplicatedStorage:FindFirstChild("Systems")
+	if not wd then
+		return "Wave info unavailable"
+	end
+	local mod = wd:FindFirstChild("WaveDirector")
+	if not mod then
+		return "Wave info unavailable"
+	end
+	local ok, api = pcall(function()
+		return require(mod)
+	end)
+	if not ok or not api then
+		return "Wave info unavailable"
+	end
+	local wave = 0
+	local phase = "?"
+	pcall(function()
+		wave = api.GetWave()
+	end)
+	pcall(function()
+		phase = api.GetPhase()
+	end)
+	return string.format("Wave %d — phase: %s", wave, tostring(phase))
+end
+
+function Commands.perks(player: Player): string
+	local rs = ReplicatedStorage:FindFirstChild("Systems")
+	if not rs then
+		return "Perk info unavailable"
+	end
+	local mod = rs:FindFirstChild("Progression")
+	if not mod then
+		return "Perk info unavailable"
+	end
+	local ok, api = pcall(function()
+		return require(mod)
+	end)
+	if not ok or not api then
+		return "Perk info unavailable"
+	end
+	local run: any = nil
+	pcall(function()
+		run = api.GetRun(player)
+	end)
+	if not run then
+		return "No active run"
+	end
+	local perks: any = run.Perks
+	if typeof(perks) ~= "table" then
+		return "No perks purchased yet"
+	end
+	local parts: { string } = {}
+	for id, stacks in pairs(perks :: any) do
+		parts[#parts + 1] = string.format("%s x%d", tostring(id), tonumber(stacks) or 0)
+	end
+	if #parts == 0 then
+		return "No perks purchased yet"
+	end
+	return "Perks: " .. table.concat(parts, ", ")
+end
+
+-- Wires command listening. Safe to call on the server only.
+function Chat.Init()
+	local tcs = getTextChatService()
+	if not tcs then
+		return
+	end
+
+	pcall(function()
+		local onIncoming = tcs:WaitForChild("OnIncomingMessage", 3)
+		if not onIncoming then
+			return
+		end
+		onIncoming = nil
+	end)
+
+	-- Listen for chat messages and answer known commands.
+	pcall(function()
+		Players.PlayerAdded:Connect(function(player: Player)
+			pcall(function()
+				player.Chatted:Connect(function(message: string)
+					local lower = string.lower(message)
+					local prefix = string.sub(lower, 1, 1)
+					if prefix ~= "!" then
+						return
+					end
+					local cmd = string.sub(lower, 2)
+					local handler = Commands[cmd]
+					if not handler then
+						return
+					end
+					local ok, reply = pcall(function()
+						return handler(player)
+					end)
+					if ok and typeof(reply) == "string" then
+						Chat.System(reply)
+					end
+				end)
+			end)
+		end)
+	end)
+end
+
+return Chat
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="9">
+        <Properties>
           <string name="Name">Economy</string>
           <string name="Source"><![CDATA[--!strict
 ------------------------------------------------------------------------------
@@ -1288,7 +1535,7 @@ return Economy
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">Effects</string>
           <string name="Source"><![CDATA[--!strict
@@ -1574,7 +1821,7 @@ return Effects
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">MapBuilder</string>
           <string name="Source"><![CDATA[--!strict
@@ -1945,7 +2192,7 @@ return MapBuilder
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">Progression</string>
           <string name="Source"><![CDATA[--!strict
@@ -2488,7 +2735,7 @@ return Progression
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">WaveDirector</string>
           <string name="Source"><![CDATA[--!strict
@@ -2525,6 +2772,7 @@ type WaveSettings = {
 	IntermissionTime: number,
 	FirstWaveDelay: number,
 	MaxConcurrentZombies: number,
+	MultiplayerCountScale: number,
 	SpawnBatchInterval: number,
 	BossEveryNWaves: number,
 	BaseZombieCount: number,
@@ -2564,6 +2812,8 @@ export type WaveState = {
 }
 
 local WaveDirector = {}
+
+local Chat = require(script.Parent.Chat)
 
 local Effects = require(script.Parent.Effects)
 
@@ -2694,6 +2944,17 @@ function WaveDirector.ZombieCountForWave(waveNumber: number): number
 	local base: number = w.BaseZombieCount
 	local growth: number = w.CountGrowthPerWave
 	local raw = base + math.floor((n - 1) * growth)
+
+	-- Multiplayer scaling: more players means more zombies so co-op stays
+	-- challenging. Sub-linear so four players is not four times the chaos.
+	pcall(function()
+		local count = #Players:GetPlayers()
+		if count > 1 then
+			local scale: number = 1 + (w.MultiplayerCountScale * (count - 1))
+			raw = math.floor(raw * scale + 0.5)
+		end
+	end)
+
 	local cap: number = w.MaxConcurrentZombies
 	if raw > cap then
 		raw = cap
@@ -2992,6 +3253,10 @@ local function runWave(waveNumber: number)
 		Effects.WaveStartFlash()
 	end)
 
+	pcall(function()
+		Chat.WaveStart(waveNumber, isBoss)
+	end)
+
 	clearTracking()
 
 	-- Bosses first so they are on the field for the whole wave.
@@ -3046,6 +3311,10 @@ local function runWave(waveNumber: number)
 	awardWaveClear(waveNumber)
 	pcall(function()
 		Remotes.Notify():FireAllClients(string.format("Wave %d cleared", waveNumber))
+	end)
+
+	pcall(function()
+		Chat.WaveCleared(waveNumber)
 	end)
 	return true
 end
@@ -3211,7 +3480,7 @@ return WaveDirector
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">Weapons</string>
           <string name="Source"><![CDATA[--!strict
@@ -4100,7 +4369,7 @@ return Weapons
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="14">
+      <Item class="ModuleScript" referent="15">
         <Properties>
           <string name="Name">ZombieAI</string>
           <string name="Source"><![CDATA[--!strict
@@ -4987,11 +5256,11 @@ return ZombieAI
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="15">
+  <Item class="ServerScriptService" referent="16">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="16">
+    <Item class="Script" referent="17">
       <Properties>
         <string name="Name">GameServer</string>
         <token name="RunContext">0</token>
@@ -5087,6 +5356,7 @@ local zombieAI: any = startSystem("ZombieAI")
 local economy: any = startSystem("Economy")
 local progression: any = startSystem("Progression")
 local weapons: any = startSystem("Weapons")
+local _chatSystem: any = startSystem("Chat")
 
 -- Cross-system wiring: weapons need to damage zombies.
 if weapons and zombieAI then
@@ -5246,25 +5516,37 @@ game:BindToClose(function()
 	task.wait(1)
 end)
 
+-- Enable chat commands (!wave, !perks, !help) once systems are up.
+do
+	local _ci: any = _chatSystem
+	if _ci and type(_ci.Init) == "function" then
+		local _ciInit: any = _ci.Init
+		pcall(function()
+			local g: any = _ciInit
+			g()
+		end)
+	end
+end
+
 trace(string.format("%s v%s boot complete", Config.GameName, Config.Version))
 ]]></string>
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterGui" referent="17">
+  <Item class="StarterGui" referent="18">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="18">
+  <Item class="StarterPlayer" referent="19">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="19">
+    <Item class="StarterPlayerScripts" referent="20">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="20">
+      <Item class="LocalScript" referent="21">
         <Properties>
           <string name="Name">ClientController</string>
           <string name="Source"><![CDATA[--!strict
@@ -5991,7 +6273,7 @@ return nil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="21">
+      <Item class="LocalScript" referent="22">
         <Properties>
           <string name="Name">HUD</string>
           <string name="Source"><![CDATA[--!strict
@@ -7203,7 +7485,7 @@ return HUD
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="22">
+      <Item class="LocalScript" referent="23">
         <Properties>
           <string name="Name">ShopUI</string>
           <string name="Source"><![CDATA[--!strict

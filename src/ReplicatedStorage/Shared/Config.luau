@@ -16,6 +16,8 @@ Config.Wave = {
 	MaxConcurrentZombies = 60,  -- hard ceiling for perf safety
 	SpawnBatchInterval = 0.75,  -- stagger spawns within a wave
 	BossEveryNWaves = 5,
+	-- Extra zombies per additional player (sub-linear).
+	MultiplayerCountScale = 0.65,
 	BaseZombieCount = 6,
 	CountGrowthPerWave = 3.4,
 	HPScalePerWave = 1.09,
