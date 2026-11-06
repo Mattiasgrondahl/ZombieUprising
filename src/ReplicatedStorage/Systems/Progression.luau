@@ -104,6 +104,8 @@ export type RunEntry = {
 	CurrentWeapon: string,
 	Lives: number,
 	SpentThisRun: number,
+	PackAPunched: boolean,
+	PackAPunchMult: number,
 }
 
 local runs: { [Player]: RunEntry } = {}
@@ -127,6 +129,8 @@ local function newRun(): RunEntry
 		CurrentWeapon = DEFAULT_WEAPON,
 		Lives = 0,
 		SpentThisRun = 0,
+		PackAPunched = false,
+		PackAPunchMult = 1,
 	}
 end
 
@@ -168,6 +172,15 @@ end
 function Progression.GetStatModifiers(player: Player): StatModifiers
 	local m = Types.NewStatModifiers()
 	local run = Progression.GetRun(player)
+
+	-- Pack-a-Punch multiplies damage on top of every perk bonus.
+	if run.PackAPunched then
+		local mult: number = run.PackAPunchMult
+		if mult <= 0 then
+			mult = 1
+		end
+		m.DamageMult = m.DamageMult * mult
+	end
 
 	for perkId, stacks in pairs(run.Perks) do
 		local def = PerkConfig[perkId]
@@ -378,6 +391,38 @@ function Progression.EquipWeapon(player: Player, weaponId: string): boolean
 	end
 	run.CurrentWeapon = weaponId
 	return true
+end
+
+-- Grants a weapon directly without payment (used by the mystery box).
+function Progression.GrantWeapon(player: Player, weaponId: string): boolean
+	local def = WeaponConfig[weaponId]
+	if not def then
+		return false
+	end
+	local run = Progression.GetRun(player)
+	run.OwnedWeapons[weaponId] = true
+	run.CurrentWeapon = weaponId
+	return true
+end
+
+local function packAPunchMult(): number
+	local p: any = Config.Progression2
+	local v = tonumber(p and p.PackAPunchDamageMult) or 2.0
+	return v
+end
+
+-- Pack-a-Punch: permanently boosts this run's damage for all owned weapons.
+function Progression.PackAPunch(player: Player): boolean
+	local run = Progression.GetRun(player)
+	run.PackAPunched = true
+	run.PackAPunchMult = packAPunchMult()
+	return true
+end
+
+-- True once the player has used Pack-a-Punch this run.
+function Progression.HasPackAPunch(player: Player): boolean
+	local run = Progression.GetRun(player)
+	return run.PackAPunched == true
 end
 
 ------------------------------------------------------------------------------

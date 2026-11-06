@@ -33,6 +33,11 @@ export type MapSettings = {
 	BarrelCount: number,
 	SpawnRingRadius: number,
 	Seed: number,
+	ZoneCount: number,
+	ZoneWidth: number,
+	DoorCost: number,
+	DoorCostGrowth: number,
+	DoorThickness: number,
 	FloorMaterial: any,
 	WallMaterial: any,
 }
@@ -255,6 +260,96 @@ local function buildAmbience(root: Folder, m: MapSettings, rand: Random)
 	end
 end
 
+-- Splits the arena into zones separated by interior walls, each pierced by a
+-- buyable door. Zone 1 is open; later zones cost progressively more.
+local function buildZonesAndDoors(root: Folder, m: MapSettings)
+	local count: number = m.ZoneCount
+	if count < 2 then
+		return
+	end
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
+
+	local zones = Instance.new("Folder")
+	zones.Name = "Zones"
+	zones.Parent = root
+
+	local doors = Instance.new("Folder")
+	doors.Name = "Doors"
+	doors.Parent = root
+
+	for i = 1, count do
+		local zCenter: number = -half + width * (i - 1) + width / 2
+		local marker = newPart({
+			Name = "Zone_" .. i,
+			Size = Vector3.new(4, 2, 4),
+			Position = Vector3.new(0, 1.5, zCenter),
+			Transparency = 1,
+			CanCollide = false,
+		})
+		marker:SetAttribute("ZoneIndex", i)
+		marker.Parent = zones
+	end
+
+	-- Interior walls between zones, with a door gap in the middle.
+	for boundary = 1, count - 1 do
+		local zPos: number = -half + width * boundary
+		local doorWidth: number = 24
+		local sideWidth: number = (m.ArenaSize - doorWidth) / 2
+
+		for _, side in ipairs({ -1, 1 }) do
+			local cx: number = side * (doorWidth / 2 + sideWidth / 2)
+			local wall = newPart({
+				Name = string.format("Boundary_%d_%d", boundary, side),
+				Size = Vector3.new(sideWidth, m.WallHeight, m.DoorThickness),
+				Position = Vector3.new(cx, m.WallHeight / 2, zPos),
+				Material = m.WallMaterial,
+				Color = Color3.fromRGB(88, 76, 68),
+			})
+			wall.Parent = root
+		end
+
+		-- The buyable door itself.
+		local cost: number = math.floor(m.DoorCost * (m.DoorCostGrowth ^ (boundary - 1)) + 0.5)
+		local door = newPart({
+			Name = string.format("Door_%d", boundary),
+			Size = Vector3.new(doorWidth, m.WallHeight, m.DoorThickness),
+			Position = Vector3.new(0, m.WallHeight / 2, zPos),
+			Material = Enum.Material.Metal,
+			Color = Color3.fromRGB(120, 80, 50),
+			Transparency = 0.15,
+			CanCollide = true,
+		})
+		door:SetAttribute("IsDoor", true)
+		door:SetAttribute("DoorIndex", boundary)
+		door:SetAttribute("Cost", cost)
+		door:SetAttribute("Open", false)
+		door:SetAttribute("LeadsToZone", boundary + 1)
+		door.Parent = doors
+
+		-- Prompt label so players know the price.
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "PriceLabel"
+		gui.Size = UDim2.new(0, 160, 0, 44)
+		gui.StudsOffset = Vector3.new(0, 4, 0)
+		gui.AlwaysOnTop = false
+		gui.MaxDistance = 60
+		gui.Adornee = door
+		gui.Parent = door
+
+		local label = Instance.new("TextLabel")
+		label.Name = "Text"
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.TextColor3 = Color3.fromRGB(255, 215, 120)
+		label.TextStrokeTransparency = 0.4
+		label.TextScaled = true
+		label.Font = Enum.Font.GothamBold
+		label.Text = string.format("Open — %d coins", cost)
+		label.Parent = gui
+	end
+end
+
 local function buildPlayerSpawn(_m: MapSettings)
 	local ws: Workspace = game:GetService("Workspace")
 	local old = ws:FindFirstChild("PlayerSpawnPad")
@@ -330,6 +425,7 @@ function MapBuilder.Build(): Folder
 	buildCover(root, m, rand)
 	buildBarrels(root, m, rand)
 	buildAmbience(root, m, rand)
+	buildZonesAndDoors(root, m)
 	buildSpawnPoints(root, m)
 	buildPlayerSpawn(m)
 	buildLighting()

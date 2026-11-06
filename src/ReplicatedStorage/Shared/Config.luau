@@ -334,6 +334,28 @@ Config.Map = {
 	Seed = 20260101,          -- deterministic geometry across builds
 	FloorMaterial = Enum.Material.Concrete,
 	WallMaterial = Enum.Material.Brick,
+
+	-- Zoned layout: the arena is split along X into progressively harder
+	-- zones. Each boundary is a buyable door that blocks sight and movement
+	-- until opened. Zone 1 is always open.
+	ZoneCount = 4,
+	ZoneWidth = 65,           -- depth of each zone along Z
+	DoorCost = 500,           -- base cost; later doors cost more
+	DoorCostGrowth = 1.6,
+	DoorThickness = 3,
+}
+
+-- Buyable progression: machines and utilities placed per zone.
+Config.Progression2 = {
+	PackAPunchCost = 5000,
+	PackAPunchDamageMult = 2.0,
+	MysteryBoxCost = 950,
+	PowerSwitchEnabled = true,
+	TrapCost = 750,
+	TrapCooldown = 30,
+	TrapDamage = 400,
+	ReviveTime = 8,
+	ReviveRange = 12,
 }
 
 ----------------------------------------------------------------------

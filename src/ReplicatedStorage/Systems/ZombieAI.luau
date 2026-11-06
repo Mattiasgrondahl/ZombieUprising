@@ -231,6 +231,30 @@ local function buildModel(arch: Archetype): any
 	torsoWeld.Part1 = torso
 	torsoWeld.Parent = root
 
+	-- Limbs so walk cycles read visually. Welded, animated procedurally.
+	local limbDefs = {
+		{ Name = "LeftArm", Size = Vector3.new(0.6 * s, 1.8 * s, 0.6 * s), Offset = Vector3.new(-1.4 * s, 0.2 * s, 0) },
+		{ Name = "RightArm", Size = Vector3.new(0.6 * s, 1.8 * s, 0.6 * s), Offset = Vector3.new(1.4 * s, 0.2 * s, 0) },
+		{ Name = "LeftLeg", Size = Vector3.new(0.7 * s, 1.8 * s, 0.7 * s), Offset = Vector3.new(-0.55 * s, -1.9 * s, 0) },
+		{ Name = "RightLeg", Size = Vector3.new(0.7 * s, 1.8 * s, 0.7 * s), Offset = Vector3.new(0.55 * s, -1.9 * s, 0) },
+	}
+	for _, d in ipairs(limbDefs) do
+		local limb = Instance.new("Part")
+		limb.Name = d.Name
+		limb.Size = d.Size
+		limb.Color = arch.BodyColor
+		limb.Material = Enum.Material.SmoothPlastic
+		limb.CanCollide = false
+		limb.Parent = model
+		local w = Instance.new("WeldConstraint")
+		w.Part0 = root
+		w.Part1 = limb
+		w.Parent = root
+		limb:SetAttribute("BaseOffsetX", d.Offset.X)
+		limb:SetAttribute("BaseOffsetY", d.Offset.Y)
+		limb:SetAttribute("BaseOffsetZ", d.Offset.Z)
+	end
+
 	local head = Instance.new("Part")
 	head.Name = "Head"
 	head.Size = Vector3.new(1.2 * s, 1.2 * s, 1.2 * s)
@@ -248,6 +272,12 @@ local function buildModel(arch: Archetype): any
 	humanoid.Health = arch.Health
 	humanoid.WalkSpeed = arch.WalkSpeed
 	humanoid.Parent = model
+
+	pcall(function()
+		local animator = Instance.new("Animator")
+		animator.Name = "ZombieAnimator"
+		animator.Parent = humanoid
+	end)
 
 	model.PrimaryPart = root
 	return model
@@ -537,6 +567,62 @@ local function untrack(model: any)
 	end
 end
 
+-- Procedural walk/attack animation. No external animation assets are needed:
+-- limbs are welded parts whose offsets we oscillate, giving a visible gait.
+local function animate(brain: Brain, now: number, moving: boolean, attacking: boolean)
+	local model: any = brain.Model
+	if not model then
+		return
+	end
+	local root: any = brain.Root
+	if not root then
+		return
+	end
+
+	local speed: number = if moving then 9 else 3
+	local phase: number = now * speed
+	local swing: number = if attacking then 1.5 else 1.0
+
+	for _, obj in ipairs(model:GetChildren()) do
+		local part: any = obj
+		if part:IsA("Part") then
+			local bx = part:GetAttribute("BaseOffsetX")
+			local by = part:GetAttribute("BaseOffsetY")
+			local bz = part:GetAttribute("BaseOffsetZ")
+			if bx ~= nil then
+				local name: string = part.Name
+				local isLeft = string.sub(name, 1, 4) == "Left"
+				local dir: number = if isLeft then 1 else -1
+				local isArm = string.find(name, "Arm") ~= nil
+
+				local offY: number = 0
+				local offZ: number = 0
+				if attacking and isArm then
+					-- Arms swing down/forward during an attack.
+					offY = -1.0 * swing
+					offZ = 0.9 * swing
+				elseif moving then
+					if isArm then
+						offZ = math.sin(phase) * 0.55 * dir * swing
+					else
+						offZ = math.sin(phase) * 0.75 * dir
+					end
+				else
+					-- Idle sway so zombies never look frozen.
+					offY = math.sin(phase * 0.5) * 0.08
+				end
+
+				local target = Vector3.new(
+					tonumber(bx) or 0,
+					(tonumber(by) or 0) + offY,
+					(tonumber(bz) or 0) + offZ
+				)
+				part.Position = root.Position + target
+			end
+		end
+	end
+end
+
 local function brainLoop(brain: Brain)
 	while brain.Alive do
 		local stepped = RunService.Heartbeat:Wait()
@@ -549,9 +635,13 @@ local function brainLoop(brain: Brain)
 		if goal then
 			chaseStep(brain, goal.Position, now)
 			tryAttack(brain, now)
+			-- Treat "just attacked" (cooldown freshly started) as mid-swing.
+			local swinging: boolean = (now - brain.LastAttack) < 0.35
+			animate(brain, now, true, swinging)
 		else
 			-- Nobody alive: drift toward the centre so zombies stay findable.
 			chaseStep(brain, MapBuilder.GetCenterSpawn(), now)
+			animate(brain, now, true, false)
 		end
 	end
 end

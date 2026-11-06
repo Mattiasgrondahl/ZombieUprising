@@ -346,6 +346,28 @@ Config.Map = {
 	Seed = 20260101,          -- deterministic geometry across builds
 	FloorMaterial = Enum.Material.Concrete,
 	WallMaterial = Enum.Material.Brick,
+
+	-- Zoned layout: the arena is split along X into progressively harder
+	-- zones. Each boundary is a buyable door that blocks sight and movement
+	-- until opened. Zone 1 is always open.
+	ZoneCount = 4,
+	ZoneWidth = 65,           -- depth of each zone along Z
+	DoorCost = 500,           -- base cost; later doors cost more
+	DoorCostGrowth = 1.6,
+	DoorThickness = 3,
+}
+
+-- Buyable progression: machines and utilities placed per zone.
+Config.Progression2 = {
+	PackAPunchCost = 5000,
+	PackAPunchDamageMult = 2.0,
+	MysteryBoxCost = 950,
+	PowerSwitchEnabled = true,
+	TrapCost = 750,
+	TrapCooldown = 30,
+	TrapDamage = 400,
+	ReviveTime = 8,
+	ReviveRange = 12,
 }
 
 ----------------------------------------------------------------------
@@ -538,6 +560,8 @@ export type RemoteMap = {
 	RequestPurchaseWeapon: RemoteEvent,
 	RequestPurchasePerk: RemoteEvent,
 	RequestRespawn: RemoteEvent,
+	RequestOpenDoor: RemoteEvent,
+	RequestMachine: RemoteEvent,
 
 	-- Server -> Client
 	WeaponStateChanged: RemoteEvent,
@@ -577,6 +601,8 @@ function Remotes.RequestReload(): RemoteEvent return get("RequestReload") end
 function Remotes.RequestPurchaseWeapon(): RemoteEvent return get("RequestPurchaseWeapon") end
 function Remotes.RequestPurchasePerk(): RemoteEvent return get("RequestPurchasePerk") end
 function Remotes.RequestRespawn(): RemoteEvent return get("RequestRespawn") end
+function Remotes.RequestOpenDoor(): RemoteEvent return get("RequestOpenDoor") end
+function Remotes.RequestMachine(): RemoteEvent return get("RequestMachine") end
 
 function Remotes.WeaponStateChanged(): RemoteEvent return get("WeaponStateChanged") end
 function Remotes.PlayerStatsChanged(): RemoteEvent return get("PlayerStatsChanged") end
@@ -591,6 +617,8 @@ function Remotes.RunEnded(): RemoteEvent return get("RunEnded") end
 function Remotes.InitServer()
 	for _, n in ipairs({
 		"RequestFire", "RequestReload", "RequestPurchaseWeapon", "RequestPurchasePerk", "RequestRespawn",
+		"RequestOpenDoor",
+		"RequestMachine",
 		"WeaponStateChanged", "PlayerStatsChanged", "WaveStateChanged", "DamageDealt",
 		"ZombieDamagedPlayer", "ShopStateChanged", "Notify", "RunEnded",
 	}) do
@@ -939,6 +967,172 @@ return Chat
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="9">
+        <Properties>
+          <string name="Name">Doors</string>
+          <string name="Source"><![CDATA[--!strict
+-- Buyable doors that gate progression through the zoned arena.
+--
+-- Doors are built by MapBuilder with attributes IsDoor / Cost / DoorIndex.
+-- This system handles purchases: validates funds, opens the door, and announces
+-- it. All server-authoritative and pcall-guarded.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Doors = {}
+
+local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+local opened: { [number]: boolean } = {}
+
+local function mapFolder(): Instance?
+	return Workspace:FindFirstChild("Map")
+end
+
+local function doorsFolder(): Instance?
+	local map = mapFolder()
+	if not map then
+		return nil
+	end
+	return map:FindFirstChild("Doors")
+end
+
+local function findDoor(index: number): Instance?
+	local folder = doorsFolder()
+	if not folder then
+		return nil
+	end
+	for _, child in ipairs(folder:GetChildren()) do
+		local any: any = child
+		if any:GetAttribute("DoorIndex") == index then
+			return child
+		end
+	end
+	return nil
+end
+
+local function spendCoins(player: Player, amount: number): boolean
+	-- Route through Economy when available so coin state has one owner.
+	local systems = ReplicatedStorage:FindFirstChild("Systems")
+	if systems then
+		local econMod = systems:FindFirstChild("Economy")
+		if econMod then
+			local ok, econ = pcall(function()
+				return require(econMod)
+			end)
+			if ok and econ and type(econ.SpendCoins) == "function" then
+				local fn: any = econ.SpendCoins
+				local okSpend, result = pcall(function()
+					return fn(econ, player, amount)
+				end)
+				if okSpend and result then
+					return true
+				end
+				if okSpend then
+					return false
+				end
+			end
+		end
+	end
+	-- No economy available: allow so the map is not hard-locked in testing.
+	return true
+end
+
+local function openDoor(door: Instance, index: number)
+	local any: any = door
+	opened[index] = true
+	any:SetAttribute("Open", true)
+	any.CanCollide = false
+	any.Transparency = 0.85
+	-- Sink it into the floor so it reads as opened rather than just ghostly.
+	local pos: any = any.Position
+	any.Position = Vector3.new(pos.X, -20, pos.Z)
+
+	local gui = door:FindFirstChild("PriceLabel")
+	if gui then
+		gui:Destroy()
+	end
+end
+
+----------------------------------------------------------------------
+-- Public API
+----------------------------------------------------------------------
+
+function Doors.Init()
+	-- Server: listen for door purchase requests from clients.
+	pcall(function()
+		Remotes.RequestOpenDoor().OnServerEvent:Connect(function(player: Player, index: any)
+			local doorIndex: number = tonumber(index) or 0
+			if doorIndex < 1 then
+				return
+			end
+			local ok, reason = Doors.TryOpen(player, doorIndex)
+			if not ok then
+				pcall(function()
+					Remotes.Notify():FireClient(player, string.format("Cannot open (%s)", tostring(reason)))
+				end)
+			end
+		end)
+	end)
+end
+
+-- Attempts to open door `index` for `player`. Returns ok + reason.
+function Doors.TryOpen(player: Player, index: number): (boolean, string?)
+	if opened[index] then
+		return false, "AlreadyOpen"
+	end
+	local door = findDoor(index)
+	if not door then
+		return false, "NoDoor"
+	end
+	local any: any = door
+	local cost: number = tonumber(any:GetAttribute("Cost")) or Config.Map.DoorCost
+
+	if not spendCoins(player, cost) then
+		return false, "InsufficientFunds"
+	end
+
+	openDoor(door, index)
+
+	pcall(function()
+		Remotes.Notify():FireAllClients(
+			string.format("%s opened the way to zone %d!", player.DisplayName, index + 1)
+		)
+	end)
+
+	return true, nil
+end
+
+function Doors.IsOpen(index: number): boolean
+	return opened[index] == true
+end
+
+-- Highest zone index currently reachable (1-based).
+function Doors.MaxReachableZone(): number
+	local maxZone = 1
+	for index, isOpen in pairs(opened) do
+		if isOpen then
+			local leads = (index :: number) + 1
+			if leads > maxZone then
+				maxZone = leads
+			end
+		end
+	end
+	return maxZone
+end
+
+function Doors.Reset()
+	for index in pairs(opened) do
+		opened[index] = nil
+	end
+end
+
+return Doors
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">Economy</string>
           <string name="Source"><![CDATA[--!strict
@@ -1535,7 +1729,7 @@ return Economy
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">Effects</string>
           <string name="Source"><![CDATA[--!strict
@@ -1821,7 +2015,455 @@ return Effects
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="12">
+        <Properties>
+          <string name="Name">Machines</string>
+          <string name="Source"><![CDATA[--!strict
+-- Tier 2 genre mechanics: power switch, perk machines, mystery box,
+-- Pack-a-Punch, and traps. All physical objects placed per zone, all
+-- server-authoritative and pcall-guarded.
+--
+-- These exist to force movement: machines live in different zones, so players
+-- must open doors and take risk to grow stronger.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Machines = {}
+
+local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+local _Doors = require(script.Parent.Doors)
+
+local P = Config.Progression2
+
+local powerOn: boolean = false
+
+----------------------------------------------------------------------
+-- Placement helpers
+----------------------------------------------------------------------
+
+local function machinesFolder(): Folder
+	local map = Workspace:FindFirstChild("Map")
+	if not map then
+		local f = Instance.new("Folder")
+		f.Name = "Map"
+		f.Parent = Workspace
+		map = f
+	end
+	local existing = map:FindFirstChild("Machines")
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local f = Instance.new("Folder")
+	f.Name = "Machines"
+	f.Parent = map
+	return f
+end
+
+-- Creates an interactable machine: a glowing pad with a price label.
+local function makeMachine(opts: {
+	Name: string,
+	Position: Vector3,
+	Color: Color3,
+	Label: string,
+	Zone: number,
+}): Part
+	local folder = machinesFolder()
+
+	local part = Instance.new("Part")
+	part.Name = opts.Name
+	part.Size = Vector3.new(6, 8, 6)
+	part.Position = opts.Position
+	part.Anchored = true
+	part.CanCollide = true
+	part.Material = Enum.Material.Metal
+	part.Color = opts.Color
+	part:SetAttribute("IsMachine", true)
+	part:SetAttribute("MachineId", opts.Name)
+	part:SetAttribute("Zone", opts.Zone)
+	part.Parent = folder
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Label"
+	gui.Size = UDim2.new(0, 180, 0, 50)
+	gui.StudsOffset = Vector3.new(0, 7, 0)
+	gui.MaxDistance = 70
+	gui.Adornee = part
+	gui.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 230, 160)
+	label.TextStrokeTransparency = 0.4
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.Text = opts.Label
+	label.Parent = gui
+
+	local light = Instance.new("PointLight")
+	light.Range = 40
+	light.Brightness = 1.4
+	light.Color = opts.Color
+	light.Parent = part
+
+	return part
+end
+
+----------------------------------------------------------------------
+-- Economy bridge (single owner of coin state)
+----------------------------------------------------------------------
+
+local function economyModule(): any?
+	local systems = ReplicatedStorage:FindFirstChild("Systems")
+	if not systems then
+		return nil
+	end
+	local mod = systems:FindFirstChild("Economy")
+	if not mod then
+		return nil
+	end
+	local ok, api = pcall(function()
+		return require(mod)
+	end)
+	if ok and api then
+		return api
+	end
+	return nil
+end
+
+local function spendCoins(player: Player, amount: number): boolean
+	local econ = economyModule()
+	if econ and type(econ.SpendCoins) == "function" then
+		local fn: any = econ.SpendCoins
+		local ok, res = pcall(function()
+			return fn(econ, player, amount)
+		end)
+		if ok then
+			return res == true
+		end
+	end
+	-- Fallback for testing when Economy is unavailable.
+	return true
+end
+
+local function progressionModule(): any?
+	local systems = ReplicatedStorage:FindFirstChild("Systems")
+	if not systems then
+		return nil
+	end
+	local mod = systems:FindFirstChild("Progression")
+	if not mod then
+		return nil
+	end
+	local ok, api = pcall(function()
+		return require(mod)
+	end)
+	if ok and api then
+		return api
+	end
+	return nil
+end
+
+local function notify(player: Player, text: string)
+	pcall(function()
+		Remotes.Notify():FireClient(player, text)
+	end)
+end
+
+----------------------------------------------------------------------
+-- Power switch
+----------------------------------------------------------------------
+
+function Machines.IsPowerOn(): boolean
+	return powerOn
+end
+
+function Machines.Build()
+	local m = Config.Map
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
+
+	local function zoneCenter(z: number): number
+		return -half + width * (z - 1) + width / 2
+	end
+
+	-- Power switch in zone 2; everything else needs power.
+	makeMachine({
+		Name = "PowerSwitch",
+		Position = Vector3.new(-34, 4, zoneCenter(2)),
+		Color = Color3.fromRGB(240, 220, 90),
+		Label = "POWER  (free)",
+		Zone = 2,
+	})
+
+	-- Perk machines spread across zones (CoD-style names).
+	makeMachine({
+		Name = "Juggernog",
+		Position = Vector3.new(30, 4, zoneCenter(2)),
+		Color = Color3.fromRGB(200, 60, 60),
+		Label = "Juggernog — Max Health",
+		Zone = 2,
+	})
+	makeMachine({
+		Name = "SpeedCola",
+		Position = Vector3.new(-34, 4, zoneCenter(3)),
+		Color = Color3.fromRGB(80, 200, 120),
+		Label = "Speed Cola — Reload",
+		Zone = 3,
+	})
+	makeMachine({
+		Name = "DoubleTap",
+		Position = Vector3.new(34, 4, zoneCenter(3)),
+		Color = Color3.fromRGB(220, 140, 60),
+		Label = "Double Tap — Fire Rate",
+		Zone = 3,
+	})
+
+	-- Mystery box in zone 2, Pack-a-Punch deep in zone 4.
+	makeMachine({
+		Name = "MysteryBox",
+		Position = Vector3.new(0, 4, zoneCenter(2)),
+		Color = Color3.fromRGB(160, 90, 200),
+		Label = string.format("Mystery Box — %d", P.MysteryBoxCost),
+		Zone = 2,
+	})
+	makeMachine({
+		Name = "PackAPunch",
+		Position = Vector3.new(0, 4, zoneCenter(4)),
+		Color = Color3.fromRGB(90, 160, 240),
+		Label = string.format("Pack-a-Punch — %d", P.PackAPunchCost),
+		Zone = 4,
+	})
+
+	-- Traps guarding chokepoints in zones 3 and 4.
+	makeMachine({
+		Name = "Trap_3",
+		Position = Vector3.new(-20, 4, zoneCenter(3)),
+		Color = Color3.fromRGB(230, 80, 220),
+		Label = string.format("Trap — %d", P.TrapCost),
+		Zone = 3,
+	})
+	makeMachine({
+		Name = "Trap_4",
+		Position = Vector3.new(20, 4, zoneCenter(4)),
+		Color = Color3.fromRGB(230, 80, 220),
+		Label = string.format("Trap — %d", P.TrapCost),
+		Zone = 4,
+	})
+end
+
+----------------------------------------------------------------------
+-- Interactions
+----------------------------------------------------------------------
+
+local trapReady: { [string]: number } = {}
+
+local function _machineAtZone(zone: number): Instance?
+	local folder = machinesFolder()
+	for _, child in ipairs(folder:GetChildren()) do
+		local any: any = child
+		if any:GetAttribute("Zone") == zone then
+			return child
+		end
+	end
+	return nil
+end
+
+function Machines.Interact(player: Player, machineId: string): (boolean, string?)
+	if machineId == "PowerSwitch" then
+		if powerOn then
+			return false, "AlreadyOn"
+		end
+		powerOn = true
+		pcall(function()
+			Remotes.Notify():FireAllClients(tostring(player.DisplayName) .. " restored the power!")
+		end)
+		return true, nil
+	end
+
+	-- Everything else requires power (classic gating).
+	if not powerOn and P.PowerSwitchEnabled then
+		return false, "NoPower"
+	end
+
+	local prog = progressionModule()
+	if not prog then
+		return false, "Unavailable"
+	end
+
+	if machineId == "Juggernog" or machineId == "SpeedCola" or machineId == "DoubleTap" then
+		local perkMap: { [string]: string } = {
+			Juggernog = "MaxHealth",
+			SpeedCola = "Reload",
+			DoubleTap = "FireRate",
+		}
+		local perkId: string? = perkMap[machineId]
+		if not perkId then
+			return false, "Unknown"
+		end
+		local buy: any = prog.PurchasePerk
+		if type(buy) ~= "function" then
+			return false, "Unavailable"
+		end
+		local b: any = buy
+		local ok, res = pcall(function()
+			return b(prog, player, perkId)
+		end)
+		if not ok then
+			return false, "Error"
+		end
+		local okRes: boolean = false
+		if typeof(res) == "table" then
+			okRes = (res :: any).Ok == true
+		else
+			okRes = res == true
+		end
+		if okRes then
+			notify(player, "Purchased " .. tostring(machineId))
+			return true, nil
+		end
+		return false, "CannotBuy"
+	end
+
+	if machineId == "MysteryBox" then
+		if not spendCoins(player, P.MysteryBoxCost) then
+			return false, "InsufficientFunds"
+		end
+		local ok = pcall(function()
+			local ids: { string } = {}
+			for id, _ in pairs(Config.Weapons) do
+				ids[#ids + 1] = tostring(id)
+			end
+			table.sort(ids)
+			local pick: string = ids[math.random(1, #ids)]
+			local grant: any = prog.GrantWeapon
+			if type(grant) == "function" then
+				local g: any = grant
+				g(prog, player, pick)
+			end
+			notify(player, "Mystery Box: " .. tostring(pick) .. "!")
+		end)
+		return ok, nil
+	end
+
+	if machineId == "PackAPunch" then
+		if not spendCoins(player, P.PackAPunchCost) then
+			return false, "InsufficientFunds"
+		end
+		local okDone = pcall(function()
+			if type(prog.PackAPunch) == "function" then
+				local pap: any = prog.PackAPunch
+				local pf: any = pap
+				pf(prog, player)
+			end
+			notify(player, "Pack-a-Punch! Damage doubled.")
+		end)
+		return okDone, nil
+	end
+
+	if string.sub(machineId, 1, 5) == "Trap_" then
+		local now: number = os.clock()
+		local ready = trapReady[machineId] or 0
+		if now < ready then
+			return false, "Cooling"
+		end
+		if not spendCoins(player, P.TrapCost) then
+			return false, "InsufficientFunds"
+		end
+		trapReady[machineId] = now + P.TrapCooldown
+		Machines.FireTrap(machineId)
+		return true, nil
+	end
+
+	return false, "Unknown"
+end
+
+-- Damages every zombie near a trap.
+function Machines.FireTrap(machineId: string)
+	pcall(function()
+		local aiMod = ReplicatedStorage:FindFirstChild("Systems")
+			and ReplicatedStorage.Systems:FindFirstChild("ZombieAI")
+		if not aiMod then
+			return
+		end
+		local ok, ai = pcall(function()
+			return require(aiMod)
+		end)
+		if not ok or not ai or type(ai.GetAlive) ~= "function" then
+			return
+		end
+		local getAll: any = ai.GetAlive
+		local okList, list = pcall(function()
+			return getAll(ai)
+		end)
+		if not okList or typeof(list) ~= "table" then
+			return
+		end
+
+		local folder = machinesFolder()
+		local machine = folder:FindFirstChild(machineId)
+		if not machine then
+			return
+		end
+		local pos: any = (machine :: any).Position
+
+		for _, model in ipairs(list :: any) do
+			local any: any = model
+			local mpos: any = nil
+			pcall(function()
+				local root = any:FindFirstChild("HumanoidRootPart")
+				if root then
+					mpos = root.Position
+				end
+			end)
+			if mpos then
+				local dx: number = mpos.X - pos.X
+				local dy: number = mpos.Y - pos.Y
+				local dz: number = mpos.Z - pos.Z
+				if math.sqrt(dx * dx + dy * dy + dz * dz) <= 26 then
+					pcall(function()
+						local dmg: any = ai.Damage
+						dmg(ai, model, P.TrapDamage, false)
+					end)
+				end
+			end
+		end
+	end)
+end
+
+function Machines.Init()
+	Machines.Build()
+	pcall(function()
+		Remotes.RequestMachine().OnServerEvent:Connect(function(player: Player, machineId: any)
+			local id: string = tostring(machineId or "")
+			if id == "" then
+				return
+			end
+			local ok, reason = Machines.Interact(player, id)
+			if not ok then
+				local messages: { [string]: string } = {
+					NoPower = "The power is off. Find the power switch!",
+					InsufficientFunds = "Not enough coins.",
+					Cooling = "Trap is recharging.",
+					AlreadyOn = "The power is already on.",
+				}
+				local key: string = tostring(reason)
+				local msg: string = messages[key] or ("Cannot use (" .. key .. ")")
+				notify(player, msg)
+			end
+		end)
+	end)
+end
+
+return Machines
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">MapBuilder</string>
           <string name="Source"><![CDATA[--!strict
@@ -1859,6 +2501,11 @@ export type MapSettings = {
 	BarrelCount: number,
 	SpawnRingRadius: number,
 	Seed: number,
+	ZoneCount: number,
+	ZoneWidth: number,
+	DoorCost: number,
+	DoorCostGrowth: number,
+	DoorThickness: number,
 	FloorMaterial: any,
 	WallMaterial: any,
 }
@@ -2081,6 +2728,96 @@ local function buildAmbience(root: Folder, m: MapSettings, rand: Random)
 	end
 end
 
+-- Splits the arena into zones separated by interior walls, each pierced by a
+-- buyable door. Zone 1 is open; later zones cost progressively more.
+local function buildZonesAndDoors(root: Folder, m: MapSettings)
+	local count: number = m.ZoneCount
+	if count < 2 then
+		return
+	end
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
+
+	local zones = Instance.new("Folder")
+	zones.Name = "Zones"
+	zones.Parent = root
+
+	local doors = Instance.new("Folder")
+	doors.Name = "Doors"
+	doors.Parent = root
+
+	for i = 1, count do
+		local zCenter: number = -half + width * (i - 1) + width / 2
+		local marker = newPart({
+			Name = "Zone_" .. i,
+			Size = Vector3.new(4, 2, 4),
+			Position = Vector3.new(0, 1.5, zCenter),
+			Transparency = 1,
+			CanCollide = false,
+		})
+		marker:SetAttribute("ZoneIndex", i)
+		marker.Parent = zones
+	end
+
+	-- Interior walls between zones, with a door gap in the middle.
+	for boundary = 1, count - 1 do
+		local zPos: number = -half + width * boundary
+		local doorWidth: number = 24
+		local sideWidth: number = (m.ArenaSize - doorWidth) / 2
+
+		for _, side in ipairs({ -1, 1 }) do
+			local cx: number = side * (doorWidth / 2 + sideWidth / 2)
+			local wall = newPart({
+				Name = string.format("Boundary_%d_%d", boundary, side),
+				Size = Vector3.new(sideWidth, m.WallHeight, m.DoorThickness),
+				Position = Vector3.new(cx, m.WallHeight / 2, zPos),
+				Material = m.WallMaterial,
+				Color = Color3.fromRGB(88, 76, 68),
+			})
+			wall.Parent = root
+		end
+
+		-- The buyable door itself.
+		local cost: number = math.floor(m.DoorCost * (m.DoorCostGrowth ^ (boundary - 1)) + 0.5)
+		local door = newPart({
+			Name = string.format("Door_%d", boundary),
+			Size = Vector3.new(doorWidth, m.WallHeight, m.DoorThickness),
+			Position = Vector3.new(0, m.WallHeight / 2, zPos),
+			Material = Enum.Material.Metal,
+			Color = Color3.fromRGB(120, 80, 50),
+			Transparency = 0.15,
+			CanCollide = true,
+		})
+		door:SetAttribute("IsDoor", true)
+		door:SetAttribute("DoorIndex", boundary)
+		door:SetAttribute("Cost", cost)
+		door:SetAttribute("Open", false)
+		door:SetAttribute("LeadsToZone", boundary + 1)
+		door.Parent = doors
+
+		-- Prompt label so players know the price.
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "PriceLabel"
+		gui.Size = UDim2.new(0, 160, 0, 44)
+		gui.StudsOffset = Vector3.new(0, 4, 0)
+		gui.AlwaysOnTop = false
+		gui.MaxDistance = 60
+		gui.Adornee = door
+		gui.Parent = door
+
+		local label = Instance.new("TextLabel")
+		label.Name = "Text"
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.TextColor3 = Color3.fromRGB(255, 215, 120)
+		label.TextStrokeTransparency = 0.4
+		label.TextScaled = true
+		label.Font = Enum.Font.GothamBold
+		label.Text = string.format("Open — %d coins", cost)
+		label.Parent = gui
+	end
+end
+
 local function buildPlayerSpawn(_m: MapSettings)
 	local ws: Workspace = game:GetService("Workspace")
 	local old = ws:FindFirstChild("PlayerSpawnPad")
@@ -2156,6 +2893,7 @@ function MapBuilder.Build(): Folder
 	buildCover(root, m, rand)
 	buildBarrels(root, m, rand)
 	buildAmbience(root, m, rand)
+	buildZonesAndDoors(root, m)
 	buildSpawnPoints(root, m)
 	buildPlayerSpawn(m)
 	buildLighting()
@@ -2192,7 +2930,7 @@ return MapBuilder
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">Progression</string>
           <string name="Source"><![CDATA[--!strict
@@ -2301,6 +3039,8 @@ export type RunEntry = {
 	CurrentWeapon: string,
 	Lives: number,
 	SpentThisRun: number,
+	PackAPunched: boolean,
+	PackAPunchMult: number,
 }
 
 local runs: { [Player]: RunEntry } = {}
@@ -2324,6 +3064,8 @@ local function newRun(): RunEntry
 		CurrentWeapon = DEFAULT_WEAPON,
 		Lives = 0,
 		SpentThisRun = 0,
+		PackAPunched = false,
+		PackAPunchMult = 1,
 	}
 end
 
@@ -2365,6 +3107,15 @@ end
 function Progression.GetStatModifiers(player: Player): StatModifiers
 	local m = Types.NewStatModifiers()
 	local run = Progression.GetRun(player)
+
+	-- Pack-a-Punch multiplies damage on top of every perk bonus.
+	if run.PackAPunched then
+		local mult: number = run.PackAPunchMult
+		if mult <= 0 then
+			mult = 1
+		end
+		m.DamageMult = m.DamageMult * mult
+	end
 
 	for perkId, stacks in pairs(run.Perks) do
 		local def = PerkConfig[perkId]
@@ -2577,6 +3328,38 @@ function Progression.EquipWeapon(player: Player, weaponId: string): boolean
 	return true
 end
 
+-- Grants a weapon directly without payment (used by the mystery box).
+function Progression.GrantWeapon(player: Player, weaponId: string): boolean
+	local def = WeaponConfig[weaponId]
+	if not def then
+		return false
+	end
+	local run = Progression.GetRun(player)
+	run.OwnedWeapons[weaponId] = true
+	run.CurrentWeapon = weaponId
+	return true
+end
+
+local function packAPunchMult(): number
+	local p: any = Config.Progression2
+	local v = tonumber(p and p.PackAPunchDamageMult) or 2.0
+	return v
+end
+
+-- Pack-a-Punch: permanently boosts this run's damage for all owned weapons.
+function Progression.PackAPunch(player: Player): boolean
+	local run = Progression.GetRun(player)
+	run.PackAPunched = true
+	run.PackAPunchMult = packAPunchMult()
+	return true
+end
+
+-- True once the player has used Pack-a-Punch this run.
+function Progression.HasPackAPunch(player: Player): boolean
+	local run = Progression.GetRun(player)
+	return run.PackAPunched == true
+end
+
 ------------------------------------------------------------------------------
 -- Lives / respawn / run end
 ------------------------------------------------------------------------------
@@ -2735,7 +3518,7 @@ return Progression
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="15">
         <Properties>
           <string name="Name">WaveDirector</string>
           <string name="Source"><![CDATA[--!strict
@@ -3480,7 +4263,7 @@ return WaveDirector
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="14">
+      <Item class="ModuleScript" referent="16">
         <Properties>
           <string name="Name">Weapons</string>
           <string name="Source"><![CDATA[--!strict
@@ -4369,7 +5152,7 @@ return Weapons
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="15">
+      <Item class="ModuleScript" referent="17">
         <Properties>
           <string name="Name">ZombieAI</string>
           <string name="Source"><![CDATA[--!strict
@@ -4605,6 +5388,30 @@ local function buildModel(arch: Archetype): any
 	torsoWeld.Part1 = torso
 	torsoWeld.Parent = root
 
+	-- Limbs so walk cycles read visually. Welded, animated procedurally.
+	local limbDefs = {
+		{ Name = "LeftArm", Size = Vector3.new(0.6 * s, 1.8 * s, 0.6 * s), Offset = Vector3.new(-1.4 * s, 0.2 * s, 0) },
+		{ Name = "RightArm", Size = Vector3.new(0.6 * s, 1.8 * s, 0.6 * s), Offset = Vector3.new(1.4 * s, 0.2 * s, 0) },
+		{ Name = "LeftLeg", Size = Vector3.new(0.7 * s, 1.8 * s, 0.7 * s), Offset = Vector3.new(-0.55 * s, -1.9 * s, 0) },
+		{ Name = "RightLeg", Size = Vector3.new(0.7 * s, 1.8 * s, 0.7 * s), Offset = Vector3.new(0.55 * s, -1.9 * s, 0) },
+	}
+	for _, d in ipairs(limbDefs) do
+		local limb = Instance.new("Part")
+		limb.Name = d.Name
+		limb.Size = d.Size
+		limb.Color = arch.BodyColor
+		limb.Material = Enum.Material.SmoothPlastic
+		limb.CanCollide = false
+		limb.Parent = model
+		local w = Instance.new("WeldConstraint")
+		w.Part0 = root
+		w.Part1 = limb
+		w.Parent = root
+		limb:SetAttribute("BaseOffsetX", d.Offset.X)
+		limb:SetAttribute("BaseOffsetY", d.Offset.Y)
+		limb:SetAttribute("BaseOffsetZ", d.Offset.Z)
+	end
+
 	local head = Instance.new("Part")
 	head.Name = "Head"
 	head.Size = Vector3.new(1.2 * s, 1.2 * s, 1.2 * s)
@@ -4622,6 +5429,12 @@ local function buildModel(arch: Archetype): any
 	humanoid.Health = arch.Health
 	humanoid.WalkSpeed = arch.WalkSpeed
 	humanoid.Parent = model
+
+	pcall(function()
+		local animator = Instance.new("Animator")
+		animator.Name = "ZombieAnimator"
+		animator.Parent = humanoid
+	end)
 
 	model.PrimaryPart = root
 	return model
@@ -4911,6 +5724,62 @@ local function untrack(model: any)
 	end
 end
 
+-- Procedural walk/attack animation. No external animation assets are needed:
+-- limbs are welded parts whose offsets we oscillate, giving a visible gait.
+local function animate(brain: Brain, now: number, moving: boolean, attacking: boolean)
+	local model: any = brain.Model
+	if not model then
+		return
+	end
+	local root: any = brain.Root
+	if not root then
+		return
+	end
+
+	local speed: number = if moving then 9 else 3
+	local phase: number = now * speed
+	local swing: number = if attacking then 1.5 else 1.0
+
+	for _, obj in ipairs(model:GetChildren()) do
+		local part: any = obj
+		if part:IsA("Part") then
+			local bx = part:GetAttribute("BaseOffsetX")
+			local by = part:GetAttribute("BaseOffsetY")
+			local bz = part:GetAttribute("BaseOffsetZ")
+			if bx ~= nil then
+				local name: string = part.Name
+				local isLeft = string.sub(name, 1, 4) == "Left"
+				local dir: number = if isLeft then 1 else -1
+				local isArm = string.find(name, "Arm") ~= nil
+
+				local offY: number = 0
+				local offZ: number = 0
+				if attacking and isArm then
+					-- Arms swing down/forward during an attack.
+					offY = -1.0 * swing
+					offZ = 0.9 * swing
+				elseif moving then
+					if isArm then
+						offZ = math.sin(phase) * 0.55 * dir * swing
+					else
+						offZ = math.sin(phase) * 0.75 * dir
+					end
+				else
+					-- Idle sway so zombies never look frozen.
+					offY = math.sin(phase * 0.5) * 0.08
+				end
+
+				local target = Vector3.new(
+					tonumber(bx) or 0,
+					(tonumber(by) or 0) + offY,
+					(tonumber(bz) or 0) + offZ
+				)
+				part.Position = root.Position + target
+			end
+		end
+	end
+end
+
 local function brainLoop(brain: Brain)
 	while brain.Alive do
 		local stepped = RunService.Heartbeat:Wait()
@@ -4923,9 +5792,13 @@ local function brainLoop(brain: Brain)
 		if goal then
 			chaseStep(brain, goal.Position, now)
 			tryAttack(brain, now)
+			-- Treat "just attacked" (cooldown freshly started) as mid-swing.
+			local swinging: boolean = (now - brain.LastAttack) < 0.35
+			animate(brain, now, true, swinging)
 		else
 			-- Nobody alive: drift toward the centre so zombies stay findable.
 			chaseStep(brain, MapBuilder.GetCenterSpawn(), now)
+			animate(brain, now, true, false)
 		end
 	end
 end
@@ -5256,11 +6129,11 @@ return ZombieAI
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="16">
+  <Item class="ServerScriptService" referent="18">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="17">
+    <Item class="Script" referent="19">
       <Properties>
         <string name="Name">GameServer</string>
         <token name="RunContext">0</token>
@@ -5356,6 +6229,21 @@ local zombieAI: any = startSystem("ZombieAI")
 local economy: any = startSystem("Economy")
 local progression: any = startSystem("Progression")
 local weapons: any = startSystem("Weapons")
+local _doorsSystem: any = startSystem("Doors")
+local machinesSystem: any = startSystem("Machines")
+
+-- Machines are physical objects, so place them once the map exists.
+do
+	local _ms: any = machinesSystem
+	if _ms and type(_ms.Build) == "function" then
+		pcall(function()
+			local _mb: any = _ms.Build
+			local g: any = _mb
+			g()
+			trace("machines placed")
+		end)
+	end
+end
 local _chatSystem: any = startSystem("Chat")
 
 -- Cross-system wiring: weapons need to damage zombies.
@@ -5416,10 +6304,28 @@ local function setupLeaderstats(player: Player)
 	folder.Parent = player
 end
 
+-- Per-player connections, released on removal so long-lived servers do not
+-- accumulate listeners (see AUDIT P1-1).
+local playerConnections: { [Player]: { any } } = {}
+
+local function cleanupPlayer(player: Player)
+	local conns = playerConnections[player]
+	if conns then
+		for _, c in ipairs(conns) do
+			pcall(function()
+				c:Disconnect()
+			end)
+		end
+		playerConnections[player] = nil
+	end
+end
+
 local function onPlayerAdded(player: Player)
 	setupLeaderstats(player)
+	cleanupPlayer(player)
+	playerConnections[player] = {}
 
-	player.CharacterAdded:Connect(function(character)
+	local charConn: any = player.CharacterAdded:Connect(function(character)
 		local humanoid = character:WaitForChild("Humanoid", 10)
 		if not humanoid then
 			return
@@ -5447,6 +6353,12 @@ local function onPlayerAdded(player: Player)
 		end
 	end)
 
+	-- Track it so it is released when the player leaves.
+	local bucket = playerConnections[player]
+	if bucket then
+		bucket[#bucket + 1] = charConn
+	end
+
 	local _economy_j: any = economy
 	if _economy_j and type(_economy_j.PlayerJoined) == "function" then
 		local _pj: any = _economy_j.PlayerJoined
@@ -5471,6 +6383,7 @@ local function onPlayerAdded(player: Player)
 end
 
 local function onPlayerRemoving(player: Player)
+	cleanupPlayer(player)
 	local _economy_l: any = economy
 	if _economy_l and type(_economy_l.PlayerLeft) == "function" then
 		local _pl: any = _economy_l.PlayerLeft
@@ -5533,20 +6446,20 @@ trace(string.format("%s v%s boot complete", Config.GameName, Config.Version))
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterGui" referent="18">
+  <Item class="StarterGui" referent="20">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="19">
+  <Item class="StarterPlayer" referent="21">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="20">
+    <Item class="StarterPlayerScripts" referent="22">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="21">
+      <Item class="LocalScript" referent="23">
         <Properties>
           <string name="Name">ClientController</string>
           <string name="Source"><![CDATA[--!strict
@@ -6273,7 +7186,7 @@ return nil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="22">
+      <Item class="LocalScript" referent="24">
         <Properties>
           <string name="Name">HUD</string>
           <string name="Source"><![CDATA[--!strict
@@ -7485,7 +8398,7 @@ return HUD
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="23">
+      <Item class="LocalScript" referent="25">
         <Properties>
           <string name="Name">ShopUI</string>
           <string name="Source"><![CDATA[--!strict

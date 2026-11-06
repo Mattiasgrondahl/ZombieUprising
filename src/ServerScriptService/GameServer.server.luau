@@ -90,6 +90,21 @@ local zombieAI: any = startSystem("ZombieAI")
 local economy: any = startSystem("Economy")
 local progression: any = startSystem("Progression")
 local weapons: any = startSystem("Weapons")
+local _doorsSystem: any = startSystem("Doors")
+local machinesSystem: any = startSystem("Machines")
+
+-- Machines are physical objects, so place them once the map exists.
+do
+	local _ms: any = machinesSystem
+	if _ms and type(_ms.Build) == "function" then
+		pcall(function()
+			local _mb: any = _ms.Build
+			local g: any = _mb
+			g()
+			trace("machines placed")
+		end)
+	end
+end
 local _chatSystem: any = startSystem("Chat")
 
 -- Cross-system wiring: weapons need to damage zombies.
@@ -150,10 +165,28 @@ local function setupLeaderstats(player: Player)
 	folder.Parent = player
 end
 
+-- Per-player connections, released on removal so long-lived servers do not
+-- accumulate listeners (see AUDIT P1-1).
+local playerConnections: { [Player]: { any } } = {}
+
+local function cleanupPlayer(player: Player)
+	local conns = playerConnections[player]
+	if conns then
+		for _, c in ipairs(conns) do
+			pcall(function()
+				c:Disconnect()
+			end)
+		end
+		playerConnections[player] = nil
+	end
+end
+
 local function onPlayerAdded(player: Player)
 	setupLeaderstats(player)
+	cleanupPlayer(player)
+	playerConnections[player] = {}
 
-	player.CharacterAdded:Connect(function(character)
+	local charConn: any = player.CharacterAdded:Connect(function(character)
 		local humanoid = character:WaitForChild("Humanoid", 10)
 		if not humanoid then
 			return
@@ -181,6 +214,12 @@ local function onPlayerAdded(player: Player)
 		end
 	end)
 
+	-- Track it so it is released when the player leaves.
+	local bucket = playerConnections[player]
+	if bucket then
+		bucket[#bucket + 1] = charConn
+	end
+
 	local _economy_j: any = economy
 	if _economy_j and type(_economy_j.PlayerJoined) == "function" then
 		local _pj: any = _economy_j.PlayerJoined
@@ -205,6 +244,7 @@ local function onPlayerAdded(player: Player)
 end
 
 local function onPlayerRemoving(player: Player)
+	cleanupPlayer(player)
 	local _economy_l: any = economy
 	if _economy_l and type(_economy_l.PlayerLeft) == "function" then
 		local _pl: any = _economy_l.PlayerLeft
