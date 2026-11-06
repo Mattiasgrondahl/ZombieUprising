@@ -120,6 +120,14 @@ function Chat.WaveCleared(waveNumber: number)
 end
 
 -- Tier 1-3 announcements so players understand the new systems.
+function Chat.SpecialWave(kind: string)
+	local text = if kind == "SwarmWave" then "SWARM — many weak incoming!"
+		elseif kind == "BruteWave" then "BRUTES — heavy hitters inbound!"
+		elseif kind == "RunnerWave" then "RUNNERS — they are fast!"
+		else "Special wave!"
+	Chat.System(text)
+end
+
 function Chat.PowerRestored(name: string)
 	Chat.System(string.format("⚡ %s restored the power! Machines are online.", name))
 end

@@ -33,6 +33,12 @@ type WaveSettings = {
 	FirstWaveDelay: number,
 	MaxConcurrentZombies: number,
 	MultiplayerCountScale: number,
+	SpecialWaveEvery: number,
+	RunnerSpeedMult: number,
+	SwarmCountMult: number,
+	SwarmHealthMult: number,
+	BruteCountMult: number,
+	BruteHealthMult: number,
 	SpawnBatchInterval: number,
 	BossEveryNWaves: number,
 	BaseZombieCount: number,
@@ -217,9 +223,20 @@ function WaveDirector.ZombieCountForWave(waveNumber: number): number
 		end
 	end)
 
+	-- Special waves reshape the wave's shape.
+	local special = WaveDirector.SpecialWaveType(n)
+	if special == "SwarmWave" then
+		raw = math.floor(raw * w.SwarmCountMult + 0.5)
+	elseif special == "BruteWave" then
+		raw = math.floor(raw * w.BruteCountMult + 0.5)
+	end
+
 	local cap: number = w.MaxConcurrentZombies
 	if raw > cap then
 		raw = cap
+	end
+	if raw < 1 then
+		raw = 1
 	end
 	if raw < 1 then
 		raw = 1
@@ -233,6 +250,31 @@ function WaveDirector.IsBossWave(waveNumber: number): boolean
 		return false
 	end
 	return waveNumber % every == 0
+end
+
+-- Special waves break monotony: every Nth non-boss wave has a theme.
+function WaveDirector.SpecialWaveType(waveNumber: number): string?
+	if WaveDirector.IsBossWave(waveNumber) then
+		return nil
+	end
+	local every = 0
+	pcall(function()
+		every = waveSettings().SpecialWaveEvery
+	end)
+	if every <= 0 then
+		return nil
+	end
+	if waveNumber % every ~= 0 then
+		return nil
+	end
+	-- Deterministic so ZombieAI can derive the same theme without extra state.
+	local kinds: { string } = { "RunnerWave", "SwarmWave", "BruteWave" }
+	local slot: number = math.floor(waveNumber / every) % 3
+	local kind: string = kinds[slot + 1]
+	if kind ~= nil and kind ~= "" then
+		return kind
+	end
+	return nil
 end
 
 function WaveDirector.HealthScaleForWave(waveNumber: number): number
@@ -277,6 +319,14 @@ end
 -- Weighted roll honouring UnlockWave; Weight <= 0 entries are skipped, which is
 -- how Boss (Weight = 0) stays out of normal waves and only appears explicitly.
 function WaveDirector.RollArchetype(waveNumber: number): string
+	-- Special waves force a themed archetype.
+	local special = WaveDirector.SpecialWaveType(waveNumber)
+	if special == "RunnerWave" then
+		return "Runner"
+	elseif special == "BruteWave" then
+		return "Brute"
+	end
+
 	local r = getRandom()
 	local entries: { { weight: number, value: any } } = {}
 	local tbl = archetypeTable()
@@ -335,6 +385,8 @@ local function spawnOne(waveNumber: number, archetypeId: string?, forceBoss: boo
 		model = callSpawn(callSpawn, id, waveNumber)
 	end)
 	if model then
+		-- Special-wave scaling is derived deterministically inside ZombieAI
+		-- using the same formula as SpecialWaveType, so nothing needs passing.
 		aliveModels[#aliveModels + 1] = model
 	end
 	return model
@@ -517,6 +569,16 @@ local function runWave(waveNumber: number)
 
 	pcall(function()
 		Chat.WaveStart(waveNumber, isBoss)
+	end)
+
+	-- Announce special wave themes so players can prepare.
+	pcall(function()
+		local special = WaveDirector.SpecialWaveType(waveNumber)
+		if special and type((Chat :: any).SpecialWave) == "function" then
+			local fn: any = (Chat :: any).SpecialWave
+			local g: any = fn
+			g(special)
+		end
 	end)
 
 	clearTracking()

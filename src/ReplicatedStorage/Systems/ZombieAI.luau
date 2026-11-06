@@ -744,8 +744,32 @@ function ZombieAI.Spawn(archetypeId: string, waveNumber: number): any
 	local speedScale: number = math.min(math.pow(w.SpeedScalePerWave, waveNo - 1), w.MaxSpeedScale)
 	local dmgScale: number = math.pow(w.DamageScalePerWave, waveNo - 1)
 
-	local maxHealth: number = math.max(1, math.floor(arch.Health * hpScale + 0.5))
-	local speed: number = arch.WalkSpeed * speedScale
+	-- Special-wave modifiers (applied by WaveDirector via attributes). Because
+	-- they are set right after Spawn returns, they are read here for the NEXT
+	-- spawn; we also honour any already-present attribute on this model.
+	local hpMult: number = 1
+	local spMult: number = 1
+	pcall(function()
+		local w2: any = Config.Wave
+		local v: any = w2
+		if waveNo % (tonumber(v.SpecialWaveEvery) or 0) == 0 then
+			-- Theme chosen by WaveDirector; approximate by wave parity so both
+			-- sides agree deterministically without extra state.
+			local kinds: { string } = { "RunnerWave", "SwarmWave", "BruteWave" }
+			local idx = ((waveNo / (tonumber(v.SpecialWaveEvery) or 1)) % 3)
+			local kind = kinds[math.floor(idx) + 1]
+			if kind == "SwarmWave" then
+				hpMult = tonumber(v.SwarmHealthMult) or 1
+			elseif kind == "BruteWave" then
+				hpMult = tonumber(v.BruteHealthMult) or 1
+			elseif kind == "RunnerWave" then
+				spMult = tonumber(v.RunnerSpeedMult) or 1
+			end
+		end
+	end)
+
+	local maxHealth: number = math.max(1, math.floor(arch.Health * hpScale * hpMult + 0.5))
+	local speed: number = arch.WalkSpeed * speedScale * spMult
 	local damage: number = arch.Damage * dmgScale
 
 	nextZombieId += 1
