@@ -69,8 +69,8 @@ local function spendCoins(player: Player, amount: number): boolean
 			local ok, econ = pcall(function()
 				return require(econMod)
 			end)
-			if ok and econ and type(econ.SpendCoins) == "function" then
-				local fn: any = econ.SpendCoins
+			if ok and econ and type(econ.Spend) == "function" then
+				local fn: any = econ.Spend
 				local okSpend, result = pcall(function()
 					return fn(econ, player, amount)
 				end)
@@ -83,8 +83,8 @@ local function spendCoins(player: Player, amount: number): boolean
 			end
 		end
 	end
-	-- No economy available: allow so the map is not hard-locked in testing.
-	return true
+	-- No economy available: deny rather than hand out free purchases.
+	return false
 end
 
 local function openDoor(door: Instance, index: number)

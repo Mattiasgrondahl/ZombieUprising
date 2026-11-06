@@ -157,11 +157,9 @@ local function endRunFor(player: Player)
 	end)
 	pcall(function()
 		local prog = require(mod)
-		if type(prog.EndRun) == "function" then
-			local fn: any = prog.EndRun
-			local g: any = fn
-			g(prog, player)
-		elseif type(prog.TryConsumeLife) == "function" then
+		-- EndRun is not exported; TryConsumeLife both revives (if lives remain)
+		-- and ends the run when out, so use it as the single entry point.
+		if type(prog.TryConsumeLife) == "function" then
 			local fn: any = prog.TryConsumeLife
 			local g: any = fn
 			local ok = g(prog, player)

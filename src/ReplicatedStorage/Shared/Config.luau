@@ -19,6 +19,9 @@ Config.Wave = {
 	-- Special wave types to break mid-game monotony.
 	-- RunnerWave: all-fast. SwarmWave: many weak. BruteWave: few tanky.
 	SpecialWaveEvery = 4,
+	-- Extraction: survive to this wave to win the run with a bonus.
+	ExtractionWave = 25,
+	ExtractionBonus = 2500,
 	RunnerSpeedMult = 1.35,
 	SwarmCountMult = 1.6,
 	SwarmHealthMult = 0.6,

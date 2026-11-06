@@ -34,6 +34,8 @@ type WaveSettings = {
 	MaxConcurrentZombies: number,
 	MultiplayerCountScale: number,
 	SpecialWaveEvery: number,
+	ExtractionWave: number,
+	ExtractionBonus: number,
 	RunnerSpeedMult: number,
 	SwarmCountMult: number,
 	SwarmHealthMult: number,
@@ -635,6 +637,34 @@ local function runWave(waveNumber: number)
 	awardWaveClear(waveNumber)
 	pcall(function()
 		Remotes.Notify():FireAllClients(string.format("Wave %d cleared", waveNumber))
+	end)
+
+	-- Extraction: reaching the target wave wins the run with a bonus payout.
+	pcall(function()
+		local w = waveSettings()
+		local target: number = tonumber(w.ExtractionWave) or 0
+		if target > 0 and waveNumber >= target then
+			local bonus: number = tonumber(w.ExtractionBonus) or 0
+			for _, player in ipairs(playerIterator()) do
+				pcall(function()
+					local econ = economy
+					if econ and type(econ.AddCoins) == "function" then
+						local fn: any = econ.AddCoins
+						local g: any = fn
+						g(econ, player, bonus)
+					end
+					Remotes.RunEnded():FireClient(player, {
+						Wave = waveNumber,
+						Reason = "Extracted",
+						Bonus = bonus,
+					})
+				end)
+			end
+			pcall(function()
+				Chat.System(string.format("🏆 EXTRACTION at wave %d! +%d coins each.", waveNumber, bonus))
+			end)
+			WaveDirector.Stop()
+		end
 	end)
 
 	pcall(function()

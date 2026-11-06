@@ -31,6 +31,9 @@ Config.Wave = {
 	-- Special wave types to break mid-game monotony.
 	-- RunnerWave: all-fast. SwarmWave: many weak. BruteWave: few tanky.
 	SpecialWaveEvery = 4,
+	-- Extraction: survive to this wave to win the run with a bonus.
+	ExtractionWave = 25,
+	ExtractionBonus = 2500,
 	RunnerSpeedMult = 1.35,
 	SwarmCountMult = 1.6,
 	SwarmHealthMult = 0.6,
@@ -1185,8 +1188,8 @@ local function spendCoins(player: Player, amount: number): boolean
 			local ok, econ = pcall(function()
 				return require(econMod)
 			end)
-			if ok and econ and type(econ.SpendCoins) == "function" then
-				local fn: any = econ.SpendCoins
+			if ok and econ and type(econ.Spend) == "function" then
+				local fn: any = econ.Spend
 				local okSpend, result = pcall(function()
 					return fn(econ, player, amount)
 				end)
@@ -1199,8 +1202,8 @@ local function spendCoins(player: Player, amount: number): boolean
 			end
 		end
 	end
-	-- No economy available: allow so the map is not hard-locked in testing.
-	return true
+	-- No economy available: deny rather than hand out free purchases.
+	return false
 end
 
 local function openDoor(door: Instance, index: number)
@@ -1467,11 +1470,9 @@ local function endRunFor(player: Player)
 	end)
 	pcall(function()
 		local prog = require(mod)
-		if type(prog.EndRun) == "function" then
-			local fn: any = prog.EndRun
-			local g: any = fn
-			g(prog, player)
-		elseif type(prog.TryConsumeLife) == "function" then
+		-- EndRun is not exported; TryConsumeLife both revives (if lives remain)
+		-- and ends the run when out, so use it as the single entry point.
+		if type(prog.TryConsumeLife) == "function" then
 			local fn: any = prog.TryConsumeLife
 			local g: any = fn
 			local ok = g(prog, player)
@@ -2668,8 +2669,8 @@ end
 
 local function spendCoins(player: Player, amount: number): boolean
 	local econ = economyModule()
-	if econ and type(econ.SpendCoins) == "function" then
-		local fn: any = econ.SpendCoins
+	if econ and type(econ.Spend) == "function" then
+		local fn: any = econ.Spend
 		local ok, res = pcall(function()
 			return fn(econ, player, amount)
 		end)
@@ -2677,8 +2678,8 @@ local function spendCoins(player: Player, amount: number): boolean
 			return res == true
 		end
 	end
-	-- Fallback for testing when Economy is unavailable.
-	return true
+	-- No economy available: deny rather than hand out free purchases.
+	return false
 end
 
 local function progressionModule(): any?
@@ -4185,6 +4186,8 @@ type WaveSettings = {
 	MaxConcurrentZombies: number,
 	MultiplayerCountScale: number,
 	SpecialWaveEvery: number,
+	ExtractionWave: number,
+	ExtractionBonus: number,
 	RunnerSpeedMult: number,
 	SwarmCountMult: number,
 	SwarmHealthMult: number,
@@ -4786,6 +4789,34 @@ local function runWave(waveNumber: number)
 	awardWaveClear(waveNumber)
 	pcall(function()
 		Remotes.Notify():FireAllClients(string.format("Wave %d cleared", waveNumber))
+	end)
+
+	-- Extraction: reaching the target wave wins the run with a bonus payout.
+	pcall(function()
+		local w = waveSettings()
+		local target: number = tonumber(w.ExtractionWave) or 0
+		if target > 0 and waveNumber >= target then
+			local bonus: number = tonumber(w.ExtractionBonus) or 0
+			for _, player in ipairs(playerIterator()) do
+				pcall(function()
+					local econ = economy
+					if econ and type(econ.AddCoins) == "function" then
+						local fn: any = econ.AddCoins
+						local g: any = fn
+						g(econ, player, bonus)
+					end
+					Remotes.RunEnded():FireClient(player, {
+						Wave = waveNumber,
+						Reason = "Extracted",
+						Bonus = bonus,
+					})
+				end)
+			end
+			pcall(function()
+				Chat.System(string.format("🏆 EXTRACTION at wave %d! +%d coins each.", waveNumber, bonus))
+			end)
+			WaveDirector.Stop()
+		end
 	end)
 
 	pcall(function()

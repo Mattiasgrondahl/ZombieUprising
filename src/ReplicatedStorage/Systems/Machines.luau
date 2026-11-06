@@ -117,8 +117,8 @@ end
 
 local function spendCoins(player: Player, amount: number): boolean
 	local econ = economyModule()
-	if econ and type(econ.SpendCoins) == "function" then
-		local fn: any = econ.SpendCoins
+	if econ and type(econ.Spend) == "function" then
+		local fn: any = econ.Spend
 		local ok, res = pcall(function()
 			return fn(econ, player, amount)
 		end)
@@ -126,8 +126,8 @@ local function spendCoins(player: Player, amount: number): boolean
 			return res == true
 		end
 	end
-	-- Fallback for testing when Economy is unavailable.
-	return true
+	-- No economy available: deny rather than hand out free purchases.
+	return false
 end
 
 local function progressionModule(): any?
