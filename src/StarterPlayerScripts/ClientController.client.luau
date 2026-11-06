@@ -24,6 +24,7 @@ local _Types = require(Shared:WaitForChild("Types"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
 local HUD = require(script.Parent:WaitForChild("HUD"))
 local ShopUI = require(script.Parent:WaitForChild("ShopUI"))
+local Interact = require(script.Parent:WaitForChild("Interact"))
 
 -- Structural mirrors. luau-analyze cannot resolve exported types across
 -- `require`, so each shape is redeclared locally (kept in sync with the shared
@@ -667,6 +668,10 @@ local function boot()
 		end)
 		pcall(function()
 			ShopUI.Start(plrGui)
+		end)
+		-- Door/machine prompts and the downed overlay.
+		pcall(function()
+			Interact.Init()
 		end)
 		pcall(function()
 			HUD.OnRespawnRequested(function()
