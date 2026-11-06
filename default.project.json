@@ -1,0 +1,28 @@
+{
+  "name": "ZombieUprising",
+  "globIgnorePaths": ["**/.git/**", "tools/**", "*.md", "*.rbxl", "*.rbxlx"],
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Shared": { "$path": "src/ReplicatedStorage/Shared" },
+      "Systems": { "$path": "src/ReplicatedStorage/Systems" }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "$path": "src/ServerScriptService"
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": { "$path": "src/StarterPlayerScripts" }
+    },
+
+    "StarterGui": {
+      "$className": "StarterGui",
+      "$path": "src/StarterGui"
+    }
+  }
+}

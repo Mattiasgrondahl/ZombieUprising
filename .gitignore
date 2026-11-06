@@ -1,0 +1,19 @@
+# Build output
+build/
+*.rbxl
+*.rbxlx
+
+# Vendored tooling
+tools/bin/
+tools/.work/
+
+# Secrets — NEVER commit
+.cookies
+.env
+*.robloxsecurity
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp

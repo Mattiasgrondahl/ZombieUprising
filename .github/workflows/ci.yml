@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain
+        run: bash tools/setup.sh
+
+      - name: Syntax gate
+        run: make syntax
+
+      - name: Strict analysis gate
+        run: make lint
+
+      - name: Rojo build gate
+        run: make build
+
+      - name: Place round-trip verification
+        run: make roundtrip
