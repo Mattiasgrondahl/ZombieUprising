@@ -148,3 +148,22 @@ Everything above is inference from source and arithmetic. The gate proves the ga
 type-clean and structurally complete; it does **not** prove these bugs manifest as described.
 The first real playtest may invalidate any of them — but the three P0s rest on arithmetic about
 the Config values themselves, so they are unlikely to be wrong.
+
+---
+
+## Post-v2.0 fixes (2026-11-06)
+
+Four critical bugs were found by auditing the newly added roadmap systems and fixed:
+
+| Bug | Impact | Fix |
+|---|---|---|
+| Zombies spawned only on the outer ring, which sits **behind closed buyable doors**, while players start in zone 1 | **Waves would never clear** — zombies could not path to players | Spawns generated per zone, filtered to reachable zones via `Doors.MaxReachableZone` |
+| Zombies targeted downed players (health 1 > 0) | Revive impossible; player re-killed instantly | Downed players excluded from `nearestTarget` |
+| `KnockDown` reacted to `Humanoid.Died` and set `Health = 1` | Too late — character already dead, so downed state did nothing | `HealthChanged` intercepts lethal damage via `Config.Player.DownedThreshold` and clamps health |
+| Mystery box charged coins even when `GrantWeapon` silently failed | Silent coin loss | Grant result verified before purchase counts |
+
+Also resolved:
+- **No client entry point for doors/machines** — systems existed server-side but nothing triggered them. Added `Interact.client.luau` with ProximityPrompts and a downed overlay.
+- **Duplicate player lifecycle** (P1-2) — `Progression.Init` registered `PlayerAdded` while `GameServer` also called `PlayerJoined`. Removed; lifecycle now owned solely by `GameServer`.
+
+Remaining known gaps: badge ids are placeholders (0 = disabled), no audio verification, and **the game still has never been executed in a real Roblox runtime**.
