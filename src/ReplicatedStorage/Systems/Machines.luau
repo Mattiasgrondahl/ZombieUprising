@@ -318,8 +318,20 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 			for id, _ in pairs(Config.Weapons) do
 				ids[#ids + 1] = tostring(id)
 			end
-			table.sort(ids)
-			local pick: string = ids[math.random(1, #ids)]
+			-- Wonder weapons are rare prizes layered on top of normal ones.
+			local wonders: { string } = {}
+			local ww: any = Config.WonderWeapons
+			if typeof(ww) == "table" then
+				for id, _ in pairs(ww) do
+					wonders[#wonders + 1] = tostring(id)
+				end
+			end
+			local pick: string
+			if #wonders > 0 and math.random(1, 100) <= 8 then
+				pick = wonders[math.random(1, #wonders)]
+			else
+				pick = ids[math.random(1, #ids)]
+			end
 			local grant: any = prog.GrantWeapon
 			if type(grant) == "function" then
 				local g: any = grant

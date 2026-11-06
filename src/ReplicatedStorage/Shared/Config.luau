@@ -356,6 +356,34 @@ Config.Progression2 = {
 	TrapDamage = 400,
 	ReviveTime = 8,
 	ReviveRange = 12,
+	-- Milestone badges (awarded once per account).
+	BadgeWave10 = 0,
+	BadgeWave20 = 0,
+	BadgeWave30 = 0,
+}
+
+-- Wonder weapons: rare, high-power mystery box prizes.
+Config.WonderWeapons = {
+	ThunderGun = {
+		Id = "ThunderGun",
+		DisplayName = "Thunder Gun",
+		Damage = 900,
+		BlastRadius = 30,
+		FireRate = 0.7,
+		MagazineSize = 2,
+		ReloadTime = 3.2,
+		AmmoReserveMax = 8,
+	},
+	RayBlaster = {
+		Id = "RayBlaster",
+		DisplayName = "Ray Blaster",
+		Damage = 1400,
+		HeadshotMultiplier = 3.0,
+		FireRate = 1.1,
+		MagazineSize = 5,
+		ReloadTime = 2.6,
+		AmmoReserveMax = 20,
+	},
 }
 
 ----------------------------------------------------------------------

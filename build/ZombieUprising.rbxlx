@@ -368,6 +368,34 @@ Config.Progression2 = {
 	TrapDamage = 400,
 	ReviveTime = 8,
 	ReviveRange = 12,
+	-- Milestone badges (awarded once per account).
+	BadgeWave10 = 0,
+	BadgeWave20 = 0,
+	BadgeWave30 = 0,
+}
+
+-- Wonder weapons: rare, high-power mystery box prizes.
+Config.WonderWeapons = {
+	ThunderGun = {
+		Id = "ThunderGun",
+		DisplayName = "Thunder Gun",
+		Damage = 900,
+		BlastRadius = 30,
+		FireRate = 0.7,
+		MagazineSize = 2,
+		ReloadTime = 3.2,
+		AmmoReserveMax = 8,
+	},
+	RayBlaster = {
+		Id = "RayBlaster",
+		DisplayName = "Ray Blaster",
+		Damage = 1400,
+		HeadshotMultiplier = 3.0,
+		FireRate = 1.1,
+		MagazineSize = 5,
+		ReloadTime = 2.6,
+		AmmoReserveMax = 20,
+	},
 }
 
 ----------------------------------------------------------------------
@@ -723,6 +751,82 @@ return Types
       </Properties>
       <Item class="ModuleScript" referent="8">
         <Properties>
+          <string name="Name">Badges</string>
+          <string name="Source"><![CDATA[--!strict
+-- Wave milestone badges. Awarded once per account via BadgeService.
+--
+-- Badge ids come from Config.Progression2. A value of 0 means "not configured",
+-- in which case awarding is skipped silently so a misconfigured id never spams
+-- errors in Studio.
+
+local BadgeService = game:GetService("BadgeService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Badges = {}
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+-- Wave thresholds in ascending order with their config keys.
+local MILESTONES: { { Wave: number, Key: string, Label: string } } = {
+	{ Wave = 10, Key = "BadgeWave10", Label = "Survived wave 10" },
+	{ Wave = 20, Key = "BadgeWave20", Label = "Survived wave 20" },
+	{ Wave = 30, Key = "BadgeWave30", Label = "Survived wave 30" },
+}
+
+local awarded: { [Player]: { [string]: boolean } } = {}
+
+local function badgeId(key: string): number
+	local p: any = Config.Progression2
+	local v = tonumber(p and p[key]) or 0
+	return v
+end
+
+local function alreadyOwns(userId: number, id: number): boolean
+	local owns = false
+	pcall(function()
+		owns = BadgeService:UserHasBadgeAsync(userId, id)
+	end)
+	return owns
+end
+
+-- Called whenever a wave is cleared. Awards any newly reached milestones.
+function Badges.OnWaveCleared(player: Player, wave: number)
+	for _, m in ipairs(MILESTONES) do
+		if wave >= m.Wave then
+			local id = badgeId(m.Key)
+			if id > 0 then
+				local record = awarded[player]
+				if not record then
+					record = {}
+					awarded[player] = record
+				end
+				if not record[m.Key] then
+					record[m.Key] = true
+					task.spawn(function()
+						pcall(function()
+							local uid: number = player.UserId
+							if alreadyOwns(uid, id) then
+								return
+							end
+							BadgeService:AwardBadge(uid, id)
+						end)
+					end)
+				end
+			end
+		end
+	end
+end
+
+function Badges.PlayerLeft(player: Player)
+	awarded[player] = nil
+end
+
+return Badges
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="9">
+        <Properties>
           <string name="Name">Chat</string>
           <string name="Source"><![CDATA[--!strict
 -- In-game chat integration for multiplayer.
@@ -966,7 +1070,7 @@ return Chat
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">Doors</string>
           <string name="Source"><![CDATA[--!strict
@@ -1132,7 +1236,297 @@ return Doors
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="11">
+        <Properties>
+          <string name="Name">Downed</string>
+          <string name="Source"><![CDATA[--!strict
+-- Downed state and teammate revive.
+--
+-- Instead of dying outright, a player who loses all health enters a DOWNED
+-- state with a bleed-out timer. Any teammate within range can revive them by
+-- holding near them. If the timer expires the run consumes a life.
+--
+-- This is the single strongest driver of co-op play in the genre: it turns
+-- death from a solo fail state into a team rescue.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+local Downed = {}
+
+local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+local P = Config.Progression2
+
+export type DownedEntry = {
+	StartedAt: number,
+	ExpiresAt: number,
+	ReviveProgress: number,
+}
+
+local downedPlayers: { [Player]: DownedEntry } = {}
+local connections: { [Player]: any } = {}
+
+----------------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------------
+
+local function nowTime(): number
+	return os.clock()
+end
+
+local function rootPartOf(player: Player): Instance?
+	local char: any = player.Character
+	if not char then
+		return nil
+	end
+	local ok, rp = pcall(function()
+		return char:FindFirstChild("HumanoidRootPart")
+	end)
+	if ok then
+		return rp
+	end
+	return nil
+end
+
+local function distanceBetween(a: Player, b: Player): number
+	local ra = rootPartOf(a)
+	local rb = rootPartOf(b)
+	if not ra or not rb then
+		return math.huge
+	end
+	local pa: any = ra.Position
+	local pb: any = rb.Position
+	local dx: number = pa.X - pb.X
+	local dy: number = pa.Y - pb.Y
+	local dz: number = pa.Z - pb.Z
+	return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function notifyAll(text: string)
+	pcall(function()
+		Remotes.Notify():FireAllClients(text)
+	end)
+end
+
+local function notify(player: Player, text: string)
+	pcall(function()
+		Remotes.Notify():FireClient(player, text)
+	end)
+end
+
+local function setDownedFlag(player: Player, value: boolean)
+	pcall(function()
+		player:SetAttribute("Downed", value)
+	end)
+end
+
+----------------------------------------------------------------------
+-- Bleed-out / revive ticking
+----------------------------------------------------------------------
+
+local function _consumeLife(player: Player)
+	local systems = ReplicatedStorage:FindFirstChild("Systems")
+	if not systems then
+		return
+	end
+	local mod = systems:FindFirstChild("Progression")
+	if not mod then
+		return
+	end
+	pcall(function()
+		local prog = require(mod)
+		if type(prog.TryConsumeLife) == "function" then
+			local fn: any = prog.TryConsumeLife
+			local g: any = fn
+			g(prog, player)
+		end
+	end)
+end
+
+local function endRunFor(player: Player)
+	local systems = ReplicatedStorage:FindFirstChild("Systems")
+	if not systems then
+		return
+	end
+	local mod = systems:FindFirstChild("Progression")
+	if not mod then
+		return
+	end
+	pcall(function()
+		local prog = require(mod)
+		if type(prog.EndRun) == "function" then
+			local fn: any = prog.EndRun
+			local g: any = fn
+			g(prog, player)
+		elseif type(prog.TryConsumeLife) == "function" then
+			local fn: any = prog.TryConsumeLife
+			local g: any = fn
+			local ok = g(prog, player)
+			if not ok then
+				pcall(function()
+					Remotes.RunEnded():FireClient(player, { Wave = 0 })
+				end)
+			end
+		end
+	end)
+end
+
+local function tickDowned()
+	local now = nowTime()
+
+	for player, entry in pairs(downedPlayers) do
+		-- Teammate revive: nearest non-downed teammate within range.
+		local helper: any = nil
+		local allPlayers: any = Players:GetPlayers()
+		for _, otherAny in ipairs(allPlayers) do
+			local other: Player = otherAny :: Player
+			if other ~= player and downedPlayers[other] == nil then
+				local alive: boolean = false
+				pcall(function()
+					local o: any = other
+					local char: any = o.Character
+					local hum: any = char and char:FindFirstChildOfClass("Humanoid")
+					alive = hum ~= nil and hum.Health > 0
+				end)
+				local inRange: boolean = false
+				pcall(function()
+					inRange = distanceBetween(player, other) <= P.ReviveRange
+				end)
+				if alive and inRange then
+					local h: any = other
+					helper = h
+					break
+				end
+			end
+		end
+
+		if helper then
+			entry.ReviveProgress = entry.ReviveProgress + 0.34
+			notify(player, string.format("Being revived... %d%%", math.floor(entry.ReviveProgress)))
+			if entry.ReviveProgress >= 100 then
+				Downed.Revive(player, helper)
+			end
+		else
+			entry.ReviveProgress = math.max(0, entry.ReviveProgress - 0.2)
+		end
+
+		if now >= entry.ExpiresAt then
+			downedPlayers[player] = nil
+			setDownedFlag(player, false)
+			notifyAll(tostring(player.DisplayName) .. " bled out.")
+			endRunFor(player)
+		end
+	end
+end
+
+----------------------------------------------------------------------
+-- Public API
+----------------------------------------------------------------------
+
+function Downed.IsDowned(player: Player): boolean
+	return downedPlayers[player] ~= nil
+end
+
+-- Places a player into the downed state instead of killing them outright.
+function Downed.KnockDown(player: Player)
+	if downedPlayers[player] then
+		return
+	end
+	local duration: number = P.ReviveTime
+	downedPlayers[player] = {
+		StartedAt = nowTime(),
+		ExpiresAt = nowTime() + duration,
+		ReviveProgress = 0,
+	}
+	setDownedFlag(player, true)
+	notifyAll(string.format("%s is DOWN! Revive them!", player.DisplayName))
+
+	-- Freeze them in place so they are a stable revive target.
+	pcall(function()
+		local char: any = player.Character
+		if char then
+			local hum: any = char:FindFirstChildOfClass("Humanoid")
+			if hum then
+				hum.WalkSpeed = 0
+				hum.JumpHeight = 0
+				hum.Health = 1
+			end
+		end
+	end)
+end
+
+-- Brings a downed player back, restored by `helper`.
+function Downed.Revive(player: Player, helper: any)
+	downedPlayers[player] = nil
+	setDownedFlag(player, false)
+
+	pcall(function()
+		local char: any = player.Character
+		if char then
+			local hum: any = char:FindFirstChildOfClass("Humanoid")
+			if hum then
+				hum.WalkSpeed = Config.Player.BaseWalkSpeed
+				hum.JumpHeight = 7.2
+				hum.Health = hum.MaxHealth * 0.5
+			end
+		end
+	end)
+
+	if helper then
+		notifyAll(string.format("%s revived %s!", tostring(helper.DisplayName), tostring(player.DisplayName)))
+	else
+		notifyAll(tostring(player.DisplayName) .. " was revived.")
+	end
+end
+
+function Downed.PlayerLeft(player: Player)
+	downedPlayers[player] = nil
+	local conn = connections[player]
+	if conn then
+		pcall(function()
+			local c: any = conn
+			c:Disconnect()
+		end)
+		connections[player] = nil
+	end
+end
+
+function Downed.Init()
+	pcall(function()
+		RunService.Heartbeat:Connect(function()
+			pcall(tickDowned)
+		end)
+	end)
+
+	-- Hook deaths: knock down rather than end the run immediately.
+	pcall(function()
+		Players.PlayerAdded:Connect(function(player: Player)
+			pcall(function()
+				player.CharacterAdded:Connect(function(character)
+					pcall(function()
+						local hum: any = character:WaitForChild("Humanoid", 8)
+						if not hum then
+							return
+						end
+						connections[player] = hum.Died:Connect(function()
+							-- Only knock down when the run should continue.
+							Downed.KnockDown(player)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end
+
+return Downed
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">Economy</string>
           <string name="Source"><![CDATA[--!strict
@@ -1729,7 +2123,7 @@ return Economy
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">Effects</string>
           <string name="Source"><![CDATA[--!strict
@@ -2015,7 +2409,7 @@ return Effects
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">Machines</string>
           <string name="Source"><![CDATA[--!strict
@@ -2338,8 +2732,20 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 			for id, _ in pairs(Config.Weapons) do
 				ids[#ids + 1] = tostring(id)
 			end
-			table.sort(ids)
-			local pick: string = ids[math.random(1, #ids)]
+			-- Wonder weapons are rare prizes layered on top of normal ones.
+			local wonders: { string } = {}
+			local ww: any = Config.WonderWeapons
+			if typeof(ww) == "table" then
+				for id, _ in pairs(ww) do
+					wonders[#wonders + 1] = tostring(id)
+				end
+			end
+			local pick: string
+			if #wonders > 0 and math.random(1, 100) <= 8 then
+				pick = wonders[math.random(1, #wonders)]
+			else
+				pick = ids[math.random(1, #ids)]
+			end
 			local grant: any = prog.GrantWeapon
 			if type(grant) == "function" then
 				local g: any = grant
@@ -2463,7 +2869,7 @@ return Machines
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="15">
         <Properties>
           <string name="Name">MapBuilder</string>
           <string name="Source"><![CDATA[--!strict
@@ -2930,7 +3336,7 @@ return MapBuilder
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="14">
+      <Item class="ModuleScript" referent="16">
         <Properties>
           <string name="Name">Progression</string>
           <string name="Source"><![CDATA[--!strict
@@ -3518,7 +3924,7 @@ return Progression
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="15">
+      <Item class="ModuleScript" referent="17">
         <Properties>
           <string name="Name">WaveDirector</string>
           <string name="Source"><![CDATA[--!strict
@@ -3595,6 +4001,8 @@ export type WaveState = {
 }
 
 local WaveDirector = {}
+
+local Badges = require(script.Parent.Badges)
 
 local Chat = require(script.Parent.Chat)
 
@@ -4099,6 +4507,15 @@ local function runWave(waveNumber: number)
 	pcall(function()
 		Chat.WaveCleared(waveNumber)
 	end)
+
+	-- Milestone badges for surviving notable waves.
+	pcall(function()
+		for _, player in ipairs(playerIterator()) do
+			pcall(function()
+				Badges.OnWaveCleared(player, waveNumber)
+			end)
+		end
+	end)
 	return true
 end
 
@@ -4263,7 +4680,7 @@ return WaveDirector
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="16">
+      <Item class="ModuleScript" referent="18">
         <Properties>
           <string name="Name">Weapons</string>
           <string name="Source"><![CDATA[--!strict
@@ -5152,7 +5569,7 @@ return Weapons
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="17">
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">ZombieAI</string>
           <string name="Source"><![CDATA[--!strict
@@ -6129,11 +6546,11 @@ return ZombieAI
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="18">
+  <Item class="ServerScriptService" referent="20">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="19">
+    <Item class="Script" referent="21">
       <Properties>
         <string name="Name">GameServer</string>
         <token name="RunContext">0</token>
@@ -6231,6 +6648,8 @@ local progression: any = startSystem("Progression")
 local weapons: any = startSystem("Weapons")
 local _doorsSystem: any = startSystem("Doors")
 local machinesSystem: any = startSystem("Machines")
+local _downedSystem: any = startSystem("Downed")
+local _badgesSystem: any = startSystem("Badges")
 
 -- Machines are physical objects, so place them once the map exists.
 do
@@ -6446,20 +6865,20 @@ trace(string.format("%s v%s boot complete", Config.GameName, Config.Version))
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterGui" referent="20">
+  <Item class="StarterGui" referent="22">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="21">
+  <Item class="StarterPlayer" referent="23">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="22">
+    <Item class="StarterPlayerScripts" referent="24">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="23">
+      <Item class="LocalScript" referent="25">
         <Properties>
           <string name="Name">ClientController</string>
           <string name="Source"><![CDATA[--!strict
@@ -7186,7 +7605,7 @@ return nil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="24">
+      <Item class="LocalScript" referent="26">
         <Properties>
           <string name="Name">HUD</string>
           <string name="Source"><![CDATA[--!strict
@@ -8398,7 +8817,7 @@ return HUD
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="25">
+      <Item class="LocalScript" referent="27">
         <Properties>
           <string name="Name">ShopUI</string>
           <string name="Source"><![CDATA[--!strict

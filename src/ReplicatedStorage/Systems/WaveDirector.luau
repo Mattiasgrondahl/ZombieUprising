@@ -73,6 +73,8 @@ export type WaveState = {
 
 local WaveDirector = {}
 
+local Badges = require(script.Parent.Badges)
+
 local Chat = require(script.Parent.Chat)
 
 local Effects = require(script.Parent.Effects)
@@ -575,6 +577,15 @@ local function runWave(waveNumber: number)
 
 	pcall(function()
 		Chat.WaveCleared(waveNumber)
+	end)
+
+	-- Milestone badges for surviving notable waves.
+	pcall(function()
+		for _, player in ipairs(playerIterator()) do
+			pcall(function()
+				Badges.OnWaveCleared(player, waveNumber)
+			end)
+		end
 	end)
 	return true
 end

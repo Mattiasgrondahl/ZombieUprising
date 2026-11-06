@@ -92,6 +92,8 @@ local progression: any = startSystem("Progression")
 local weapons: any = startSystem("Weapons")
 local _doorsSystem: any = startSystem("Doors")
 local machinesSystem: any = startSystem("Machines")
+local _downedSystem: any = startSystem("Downed")
+local _badgesSystem: any = startSystem("Badges")
 
 -- Machines are physical objects, so place them once the map exists.
 do
