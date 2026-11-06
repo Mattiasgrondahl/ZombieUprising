@@ -80,7 +80,7 @@ type EconomyApi = {
 
 local Progression = {}
 
-local Players = game:GetService("Players")
+local _Players = game:GetService("Players")
 
 type PerkTable = { [string]: PerkDef }
 type WeaponTable = { [string]: WeaponDef }
@@ -523,27 +523,9 @@ function Progression.Init()
 	end
 	booted = true
 
-	Remotes.InitServer()
-
-	Players.PlayerAdded:Connect(function(player: Player)
-		Progression.StartRun(player)
-		player.CharacterAdded:Connect(function()
-			task.delay(0.25, function()
-				Progression.ApplyStatsToCharacter(player)
-			end)
-		end)
-	end)
-
-	Players.PlayerRemoving:Connect(function(player: Player)
-		runs[player] = nil
-		respawnLocks[playerKey(player)] = nil
-		local econ = getEconomy()
-		if econ then
-			pcall(function()
-				econ.PlayerRemoving(player)
-			end)
-		end
-	end)
+	-- Player lifecycle is owned by GameServer, which calls PlayerJoined /
+	-- PlayerLeft. Registering PlayerAdded here as well would duplicate run
+	-- setup and leak CharacterAdded connections (see AUDIT P1-1/P1-2).
 
 	-- Shop + respawn entry points. All arguments are treated as untrusted.
 	Remotes.RequestPurchaseWeapon().OnServerEvent:Connect(function(player: Player, weaponId: any)
