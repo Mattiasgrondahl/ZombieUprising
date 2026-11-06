@@ -191,25 +191,51 @@ local function buildBarrels(root: Folder, m: MapSettings, rand: Random)
 	end
 end
 
--- Marks where zombies may spawn (just outside/around the arena rim).
+-- Marks where zombies may spawn.
+--
+-- IMPORTANT: spawns are generated PER ZONE, not just on one outer ring. With
+-- buyable doors closed, a zombie spawned beyond the last opened door cannot
+-- path to the players, which would stall the wave forever. Per-zone rings
+-- guarantee every wave has reachable spawn points.
 local function buildSpawnPoints(root: Folder, m: MapSettings)
 	local f = Instance.new("Folder")
 	f.Name = "ZombieSpawnPoints"
 	f.Parent = root
 
-	local count = 16
-	for i = 1, count do
-		local angle = (i / count) * math.pi * 2
-		local r: number = m.SpawnRingRadius
-		local p = newPart({
-			Name = "Spawn_" .. i,
-			Size = Vector3.new(2, 2, 2),
-			Position = Vector3.new(math.cos(angle) * r, 2, math.sin(angle) * r),
-			Transparency = 1,
-			CanCollide = false,
-			Anchored = true,
-		})
-		p.Parent = f
+	local perZone = 8
+	local zoneCount: number = m.ZoneCount
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
+
+	for zone = 1, zoneCount do
+		local zStart: number = -half + width * (zone - 1)
+		local zCenter: number = zStart + width / 2
+
+		for i = 1, perZone do
+			local t = (i - 0.5) / perZone
+			-- Spread across the zone, alternating sides so zombies come from
+			-- both flanks.
+			local side: number = if i % 2 == 0 then -1 else 1
+			local x: number = side * (m.ArenaSize / 2 - 14)
+			local z: number = zStart + (t * width)
+
+			-- Keep at least a little separation from the exact centre lane.
+			if math.abs(z - zCenter) < 6 then
+				z = zCenter + 8
+			end
+			z = math.clamp(z, zStart + 4, zStart + width - 4)
+
+			local p = newPart({
+				Name = string.format("Spawn_Z%d_%d", zone, i),
+				Size = Vector3.new(2, 2, 2),
+				Position = Vector3.new(x, 2, z),
+				Transparency = 1,
+				CanCollide = false,
+				Anchored = true,
+			})
+			p:SetAttribute("Zone", zone)
+			p.Parent = f
+		end
 	end
 end
 

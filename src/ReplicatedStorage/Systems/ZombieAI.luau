@@ -132,22 +132,61 @@ local function getRandom(): Random
 end
 
 -- Cached view of the map's spawn points. Never yields; MapBuilder returns an
--- empty array when the map has not been built yet.
+-- True when a zone is reachable given which doors are open.
+local function zoneReachable(zone: number): boolean
+	if zone <= 1 then
+		return true
+	end
+	local ok, maxZone = pcall(function()
+		local systems = script.Parent
+		local mod = systems:FindFirstChild("Doors")
+		if not mod then
+			return 99
+		end
+		local doors = require(mod)
+		if type(doors.MaxReachableZone) ~= "function" then
+			return 99
+		end
+		local fn: any = doors.MaxReachableZone
+		local g: any = fn
+		return g(doors)
+	end)
+	if not ok then
+		return true
+	end
+	return zone <= (tonumber(maxZone) or 1)
+end
+
+-- Spawn points restricted to zones the players can actually reach. Without
+-- this, zombies would spawn behind closed doors and never reach anyone.
 local function spawnPoints(): { any }
-	local n = #spawnPointsCache
-	if n > 0 then
-		return spawnPointsCache
+	-- Touch the cache so it stays referenced by ClearAll.
+	if #spawnPointsCache > 0 then
+		table.clear(spawnPointsCache)
 	end
 	local got: any = MapBuilder.GetSpawnPoints()
-	local count = 0
+	local out: { any } = {}
 	if typeof(got) == "table" then
-		local t: any = got
-		for _, v in ipairs(t) do
-			count += 1
-			spawnPointsCache[count] = v
+		for _, v in ipairs(got :: any) do
+			local zone: number = 1
+			pcall(function()
+				local a: any = v
+				zone = tonumber(a:GetAttribute("Zone")) or 1
+			end)
+			if zoneReachable(zone) then
+				out[#out + 1] = v
+			end
 		end
 	end
-	return spawnPointsCache
+	-- Fall back to every point if filtering left us with none.
+	if #out == 0 then
+		if typeof(got) == "table" then
+			for _, v in ipairs(got :: any) do
+				out[#out + 1] = v
+			end
+		end
+	end
+	return out
 end
 
 local function archetypeTable(): { [string]: Archetype }
@@ -310,7 +349,13 @@ local function nearestTarget(brain: Brain): any?
 		if char then
 			local hum: any = char:FindFirstChildOfClass("Humanoid")
 			local rp: any = char:FindFirstChild("HumanoidRootPart")
-			if hum and rp and hum.Health > 0 then
+			-- Skip downed players so teammates can actually revive them.
+			local isDowned: boolean = false
+			pcall(function()
+				isDowned = player:GetAttribute("Downed") == true
+			end)
+
+			if hum and rp and hum.Health > 0 and not isDowned then
 				local p: any = rp.Position
 				local dx: number = p.X - rootPos.X
 				local dy: number = p.Y - rootPos.Y

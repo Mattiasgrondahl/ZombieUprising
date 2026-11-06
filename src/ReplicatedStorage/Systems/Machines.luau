@@ -313,7 +313,8 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 		if not spendCoins(player, P.MysteryBoxCost) then
 			return false, "InsufficientFunds"
 		end
-		local ok = pcall(function()
+		local granted: boolean = false
+		pcall(function()
 			local ids: { string } = {}
 			for id, _ in pairs(Config.Weapons) do
 				ids[#ids + 1] = tostring(id)
@@ -333,13 +334,23 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 				pick = ids[math.random(1, #ids)]
 			end
 			local grant: any = prog.GrantWeapon
-			if type(grant) == "function" then
-				local g: any = grant
-				g(prog, player, pick)
+			if type(grant) ~= "function" then
+				granted = false
+				return
 			end
-			notify(player, "Mystery Box: " .. tostring(pick) .. "!")
+			local g: any = grant
+			local gok, res = pcall(function()
+				return g(prog, player, pick)
+			end)
+			granted = gok and res ~= false
+			if granted then
+				notify(player, "Mystery Box: " .. tostring(pick) .. "!")
+			end
 		end)
-		return ok, nil
+		if not granted then
+			return false, "Unavailable"
+		end
+		return true, nil
 	end
 
 	if machineId == "PackAPunch" then

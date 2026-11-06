@@ -27,6 +27,7 @@ export type DownedEntry = {
 
 local downedPlayers: { [Player]: DownedEntry } = {}
 local connections: { [Player]: any } = {}
+local diedConnections: { [Player]: any } = {}
 
 ----------------------------------------------------------------------
 -- Helpers
@@ -203,7 +204,8 @@ function Downed.KnockDown(player: Player)
 	setDownedFlag(player, true)
 	notifyAll(string.format("%s is DOWN! Revive them!", player.DisplayName))
 
-	-- Freeze them in place so they are a stable revive target.
+	-- Keep them alive at low health and immobile, so they can be revived.
+	-- Without restoring health the humanoid would simply die.
 	pcall(function()
 		local char: any = player.Character
 		if char then
@@ -211,7 +213,8 @@ function Downed.KnockDown(player: Player)
 			if hum then
 				hum.WalkSpeed = 0
 				hum.JumpHeight = 0
-				hum.Health = 1
+				hum.Health = Config.Player.DownedThreshold
+				hum:SetAttribute("DownedImmune", true)
 			end
 		end
 	end)
@@ -243,13 +246,15 @@ end
 
 function Downed.PlayerLeft(player: Player)
 	downedPlayers[player] = nil
-	local conn = connections[player]
-	if conn then
-		pcall(function()
-			local c: any = conn
-			c:Disconnect()
-		end)
-		connections[player] = nil
+	for _, bucket in ipairs({ connections, diedConnections }) do
+		local conn = bucket[player]
+		if conn then
+			pcall(function()
+				local c: any = conn
+				c:Disconnect()
+			end)
+			bucket[player] = nil
+		end
 	end
 end
 
@@ -270,10 +275,31 @@ function Downed.Init()
 						if not hum then
 							return
 						end
-						connections[player] = hum.Died:Connect(function()
-							-- Only knock down when the run should continue.
-							Downed.KnockDown(player)
+						-- Intercept lethal damage rather than reacting to `Died`:
+					-- once Died fires the character is gone and restoring
+					-- health would not save them. Clamp at 1 HP and knock down.
+					connections[player] = hum.HealthChanged:Connect(function(health: number)
+						pcall(function()
+							if Downed.IsDowned(player) then
+								return
+							end
+							if health <= 0 then
+								-- Too late to save them this tick.
+								return
+							end
+							if health <= Config.Player.DownedThreshold then
+								Downed.KnockDown(player)
+							end
 						end)
+					end)
+
+					-- Fallback: something killed them outright (fall damage etc).
+					local diedConn: any = hum.Died:Connect(function()
+						if not Downed.IsDowned(player) then
+							Downed.KnockDown(player)
+						end
+					end)
+					diedConnections[player] = diedConn
 					end)
 				end)
 			end)

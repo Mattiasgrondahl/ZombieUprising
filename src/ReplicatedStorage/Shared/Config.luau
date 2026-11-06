@@ -36,6 +36,8 @@ Config.Player = {
 	RespawnDelay = 5,
 	StartingCoins = 0,
 	InvulnerabilityAfterSpawn = 2.5,
+	-- Health at/below which a player is knocked down instead of killed.
+	DownedThreshold = 1,
 }
 
 ----------------------------------------------------------------------

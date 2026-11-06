@@ -48,6 +48,8 @@ Config.Player = {
 	RespawnDelay = 5,
 	StartingCoins = 0,
 	InvulnerabilityAfterSpawn = 2.5,
+	-- Health at/below which a player is knocked down instead of killed.
+	DownedThreshold = 1,
 }
 
 ----------------------------------------------------------------------
@@ -1268,6 +1270,7 @@ export type DownedEntry = {
 
 local downedPlayers: { [Player]: DownedEntry } = {}
 local connections: { [Player]: any } = {}
+local diedConnections: { [Player]: any } = {}
 
 ----------------------------------------------------------------------
 -- Helpers
@@ -1444,7 +1447,8 @@ function Downed.KnockDown(player: Player)
 	setDownedFlag(player, true)
 	notifyAll(string.format("%s is DOWN! Revive them!", player.DisplayName))
 
-	-- Freeze them in place so they are a stable revive target.
+	-- Keep them alive at low health and immobile, so they can be revived.
+	-- Without restoring health the humanoid would simply die.
 	pcall(function()
 		local char: any = player.Character
 		if char then
@@ -1452,7 +1456,8 @@ function Downed.KnockDown(player: Player)
 			if hum then
 				hum.WalkSpeed = 0
 				hum.JumpHeight = 0
-				hum.Health = 1
+				hum.Health = Config.Player.DownedThreshold
+				hum:SetAttribute("DownedImmune", true)
 			end
 		end
 	end)
@@ -1484,13 +1489,15 @@ end
 
 function Downed.PlayerLeft(player: Player)
 	downedPlayers[player] = nil
-	local conn = connections[player]
-	if conn then
-		pcall(function()
-			local c: any = conn
-			c:Disconnect()
-		end)
-		connections[player] = nil
+	for _, bucket in ipairs({ connections, diedConnections }) do
+		local conn = bucket[player]
+		if conn then
+			pcall(function()
+				local c: any = conn
+				c:Disconnect()
+			end)
+			bucket[player] = nil
+		end
 	end
 end
 
@@ -1511,10 +1518,31 @@ function Downed.Init()
 						if not hum then
 							return
 						end
-						connections[player] = hum.Died:Connect(function()
-							-- Only knock down when the run should continue.
-							Downed.KnockDown(player)
+						-- Intercept lethal damage rather than reacting to `Died`:
+					-- once Died fires the character is gone and restoring
+					-- health would not save them. Clamp at 1 HP and knock down.
+					connections[player] = hum.HealthChanged:Connect(function(health: number)
+						pcall(function()
+							if Downed.IsDowned(player) then
+								return
+							end
+							if health <= 0 then
+								-- Too late to save them this tick.
+								return
+							end
+							if health <= Config.Player.DownedThreshold then
+								Downed.KnockDown(player)
+							end
 						end)
+					end)
+
+					-- Fallback: something killed them outright (fall damage etc).
+					local diedConn: any = hum.Died:Connect(function()
+						if not Downed.IsDowned(player) then
+							Downed.KnockDown(player)
+						end
+					end)
+					diedConnections[player] = diedConn
 					end)
 				end)
 			end)
@@ -2727,7 +2755,8 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 		if not spendCoins(player, P.MysteryBoxCost) then
 			return false, "InsufficientFunds"
 		end
-		local ok = pcall(function()
+		local granted: boolean = false
+		pcall(function()
 			local ids: { string } = {}
 			for id, _ in pairs(Config.Weapons) do
 				ids[#ids + 1] = tostring(id)
@@ -2747,13 +2776,23 @@ function Machines.Interact(player: Player, machineId: string): (boolean, string?
 				pick = ids[math.random(1, #ids)]
 			end
 			local grant: any = prog.GrantWeapon
-			if type(grant) == "function" then
-				local g: any = grant
-				g(prog, player, pick)
+			if type(grant) ~= "function" then
+				granted = false
+				return
 			end
-			notify(player, "Mystery Box: " .. tostring(pick) .. "!")
+			local g: any = grant
+			local gok, res = pcall(function()
+				return g(prog, player, pick)
+			end)
+			granted = gok and res ~= false
+			if granted then
+				notify(player, "Mystery Box: " .. tostring(pick) .. "!")
+			end
 		end)
-		return ok, nil
+		if not granted then
+			return false, "Unavailable"
+		end
+		return true, nil
 	end
 
 	if machineId == "PackAPunch" then
@@ -3065,25 +3104,51 @@ local function buildBarrels(root: Folder, m: MapSettings, rand: Random)
 	end
 end
 
--- Marks where zombies may spawn (just outside/around the arena rim).
+-- Marks where zombies may spawn.
+--
+-- IMPORTANT: spawns are generated PER ZONE, not just on one outer ring. With
+-- buyable doors closed, a zombie spawned beyond the last opened door cannot
+-- path to the players, which would stall the wave forever. Per-zone rings
+-- guarantee every wave has reachable spawn points.
 local function buildSpawnPoints(root: Folder, m: MapSettings)
 	local f = Instance.new("Folder")
 	f.Name = "ZombieSpawnPoints"
 	f.Parent = root
 
-	local count = 16
-	for i = 1, count do
-		local angle = (i / count) * math.pi * 2
-		local r: number = m.SpawnRingRadius
-		local p = newPart({
-			Name = "Spawn_" .. i,
-			Size = Vector3.new(2, 2, 2),
-			Position = Vector3.new(math.cos(angle) * r, 2, math.sin(angle) * r),
-			Transparency = 1,
-			CanCollide = false,
-			Anchored = true,
-		})
-		p.Parent = f
+	local perZone = 8
+	local zoneCount: number = m.ZoneCount
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
+
+	for zone = 1, zoneCount do
+		local zStart: number = -half + width * (zone - 1)
+		local zCenter: number = zStart + width / 2
+
+		for i = 1, perZone do
+			local t = (i - 0.5) / perZone
+			-- Spread across the zone, alternating sides so zombies come from
+			-- both flanks.
+			local side: number = if i % 2 == 0 then -1 else 1
+			local x: number = side * (m.ArenaSize / 2 - 14)
+			local z: number = zStart + (t * width)
+
+			-- Keep at least a little separation from the exact centre lane.
+			if math.abs(z - zCenter) < 6 then
+				z = zCenter + 8
+			end
+			z = math.clamp(z, zStart + 4, zStart + width - 4)
+
+			local p = newPart({
+				Name = string.format("Spawn_Z%d_%d", zone, i),
+				Size = Vector3.new(2, 2, 2),
+				Position = Vector3.new(x, 2, z),
+				Transparency = 1,
+				CanCollide = false,
+				Anchored = true,
+			})
+			p:SetAttribute("Zone", zone)
+			p.Parent = f
+		end
 	end
 end
 
@@ -5706,22 +5771,61 @@ local function getRandom(): Random
 end
 
 -- Cached view of the map's spawn points. Never yields; MapBuilder returns an
--- empty array when the map has not been built yet.
+-- True when a zone is reachable given which doors are open.
+local function zoneReachable(zone: number): boolean
+	if zone <= 1 then
+		return true
+	end
+	local ok, maxZone = pcall(function()
+		local systems = script.Parent
+		local mod = systems:FindFirstChild("Doors")
+		if not mod then
+			return 99
+		end
+		local doors = require(mod)
+		if type(doors.MaxReachableZone) ~= "function" then
+			return 99
+		end
+		local fn: any = doors.MaxReachableZone
+		local g: any = fn
+		return g(doors)
+	end)
+	if not ok then
+		return true
+	end
+	return zone <= (tonumber(maxZone) or 1)
+end
+
+-- Spawn points restricted to zones the players can actually reach. Without
+-- this, zombies would spawn behind closed doors and never reach anyone.
 local function spawnPoints(): { any }
-	local n = #spawnPointsCache
-	if n > 0 then
-		return spawnPointsCache
+	-- Touch the cache so it stays referenced by ClearAll.
+	if #spawnPointsCache > 0 then
+		table.clear(spawnPointsCache)
 	end
 	local got: any = MapBuilder.GetSpawnPoints()
-	local count = 0
+	local out: { any } = {}
 	if typeof(got) == "table" then
-		local t: any = got
-		for _, v in ipairs(t) do
-			count += 1
-			spawnPointsCache[count] = v
+		for _, v in ipairs(got :: any) do
+			local zone: number = 1
+			pcall(function()
+				local a: any = v
+				zone = tonumber(a:GetAttribute("Zone")) or 1
+			end)
+			if zoneReachable(zone) then
+				out[#out + 1] = v
+			end
 		end
 	end
-	return spawnPointsCache
+	-- Fall back to every point if filtering left us with none.
+	if #out == 0 then
+		if typeof(got) == "table" then
+			for _, v in ipairs(got :: any) do
+				out[#out + 1] = v
+			end
+		end
+	end
+	return out
 end
 
 local function archetypeTable(): { [string]: Archetype }
@@ -5884,7 +5988,13 @@ local function nearestTarget(brain: Brain): any?
 		if char then
 			local hum: any = char:FindFirstChildOfClass("Humanoid")
 			local rp: any = char:FindFirstChild("HumanoidRootPart")
-			if hum and rp and hum.Health > 0 then
+			-- Skip downed players so teammates can actually revive them.
+			local isDowned: boolean = false
+			pcall(function()
+				isDowned = player:GetAttribute("Downed") == true
+			end)
+
+			if hum and rp and hum.Health > 0 and not isDowned then
 				local p: any = rp.Position
 				local dx: number = p.X - rootPos.X
 				local dy: number = p.Y - rootPos.Y
