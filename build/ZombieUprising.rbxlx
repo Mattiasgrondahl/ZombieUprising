@@ -6454,6 +6454,269 @@ return WaveDirector
       </Item>
       <Item class="ModuleScript" referent="19">
         <Properties>
+          <string name="Name">WeaponView</string>
+          <string name="Source"><![CDATA[--!strict
+-- Visible held weapon.
+--
+-- Firing is a server-side raycast the player never sees in their own hands, so
+-- before this module the character fought bare-handed and a new player could
+-- not tell they had a weapon they could shoot at all. This module builds a
+-- small stud-part gun welded to the character's right hand and rebuilds it on
+-- every equip/refresh, purely visual: it holds no Tool, swallows no input and
+-- changes nothing about combat itself.
+--
+-- Barrel alignment: built along -Z, the Roblox look-forward convention, so the
+-- muzzle points where the character faces once welded.
+
+local Config = require(script.Parent.Shared.Config)
+
+local WeaponView = {}
+
+local COL_GUNMETAL = Color3.fromRGB(38, 40, 44)
+local COL_STEEL = Color3.fromRGB(120, 124, 132)
+local COL_WOOD = Color3.fromRGB(96, 62, 38)
+local COL_ACCENT = Color3.fromRGB(70, 170, 210)
+local COL_ORANGE = Color3.fromRGB(200, 120, 40)
+
+type PartSpec = {
+	Name: string,
+	Size: Vector3,
+	CFrame: CFrame,
+	Color: Color3,
+	-- The offline analyzer's Roblox definitions do not resolve Enum.Material as
+	-- a type, so Enum values are typed through `any` (runtime values are real).
+	Material: any,
+}
+
+local RIG_NAME = "ZA_WeaponRig"
+
+-- One welded assembly per weapon id: grip part at the origin, forward -Z.
+local BUILDERS: { [string]: { PartSpec } } = {}
+
+BUILDERS.Pistol = {
+	-- Slide/body pointing forward.
+	{ Name = "Body", Size = Vector3.new(0.32, 0.58, 1.5),
+		CFrame = CFrame.new(0, 0.1, -0.15), Color = COL_GUNMETAL, Material = Enum.Material.Metal },
+	-- Muzzle.
+	{ Name = "Muzzle", Size = Vector3.new(0.2, 0.2, 0.35),
+		CFrame = CFrame.new(0, 0.1, -1.05), Color = COL_STEEL, Material = Enum.Material.Metal },
+	-- Grip hanging down at the rear.
+	{ Name = "Grip", Size = Vector3.new(0.28, 0.75, 0.4),
+		CFrame = CFrame.new(0, -0.35, 0.3), Color = Color3.fromRGB(24, 24, 26), Material = Enum.Material.SmoothPlastic },
+}
+
+BUILDERS.SMG = {
+	{ Name = "Body", Size = Vector3.new(0.4, 0.62, 1.9),
+		CFrame = CFrame.new(0, 0.1, -0.15), Color = COL_GUNMETAL, Material = Enum.Material.Metal },
+	{ Name = "Muzzle", Size = Vector3.new(0.18, 0.18, 0.4),
+		CFrame = CFrame.new(0, 0.1, -1.25), Color = COL_STEEL, Material = Enum.Material.Metal },
+	{ Name = "Magazine", Size = Vector3.new(0.26, 0.9, 0.35),
+		CFrame = CFrame.new(0, -0.5, -0.25), Color = Color3.fromRGB(26, 27, 30), Material = Enum.Material.SmoothPlastic },
+	-- Data port stripe, feeds the "Vector" identity.
+	{ Name = "Stripe", Size = Vector3.new(0.44, 0.08, 0.9),
+		CFrame = CFrame.new(0, 0.42, -0.15), Color = COL_ACCENT, Material = Enum.Material.Neon },
+	{ Name = "Grip", Size = Vector3.new(0.28, 0.75, 0.4),
+		CFrame = CFrame.new(0, -0.32, 0.42), Color = Color3.fromRGB(24, 24, 26), Material = Enum.Material.SmoothPlastic },
+	{ Name = "Stock", Size = Vector3.new(0.26, 0.3, 0.85),
+		CFrame = CFrame.new(0, 0.05, 0.9), Color = COL_GUNMETAL, Material = Enum.Material.Metal },
+}
+
+BUILDERS.Shotgun = {
+	{ Name = "Barrel", Size = Vector3.new(0.36, 0.36, 2.6),
+		CFrame = CFrame.new(0, 0.15, -0.7), Color = COL_GUNMETAL, Material = Enum.Material.Metal },
+	{ Name = "Tube", Size = Vector3.new(0.28, 0.28, 2.2),
+		CFrame = CFrame.new(0, -0.16, -0.65), Color = COL_STEEL, Material = Enum.Material.Metal },
+	{ Name = "Pump", Size = Vector3.new(0.42, 0.22, 0.75),
+		CFrame = CFrame.new(0, -0.18, -0.25), Color = COL_ORANGE, Material = Enum.Material.SmoothPlastic },
+	{ Name = "Receiver", Size = Vector3.new(0.4, 0.5, 0.9),
+		CFrame = CFrame.new(0, 0.12, 0.35), Color = Color3.fromRGB(28, 29, 32), Material = Enum.Material.SmoothPlastic },
+	{ Name = "Stock", Size = Vector3.new(0.32, 0.6, 1.1),
+		CFrame = CFrame.new(0, -0.08, 1.15), Color = COL_WOOD, Material = Enum.Material.Wood },
+}
+
+BUILDERS.Rifle = {
+	{ Name = "Barrel", Size = Vector3.new(0.3, 0.3, 3.4),
+		CFrame = CFrame.new(0, 0.12, -1.15), Color = COL_STEEL, Material = Enum.Material.Metal },
+	{ Name = "Receiver", Size = Vector3.new(0.4, 0.55, 1.4),
+		CFrame = CFrame.new(0, 0.1, 0.05), Color = COL_GUNMETAL, Material = Enum.Material.Metal },
+	{ Name = "Magazine", Size = Vector3.new(0.28, 0.85, 0.4),
+		CFrame = CFrame.new(0, -0.45, 0.15), Color = Color3.fromRGB(26, 27, 30), Material = Enum.Material.SmoothPlastic },
+	-- Marksman scope.
+	{ Name = "Scope", Size = Vector3.new(0.26, 0.26, 1.15),
+		CFrame = CFrame.new(0, 0.62, -0.1), Color = Color3.fromRGB(20, 20, 22), Material = Enum.Material.Metal },
+	{ Name = "Stock", Size = Vector3.new(0.3, 0.55, 1.7),
+		CFrame = CFrame.new(0, -0.02, 1.35), Color = COL_GUNMETAL, Material = Enum.Material.Metal },
+	{ Name = "Grip", Size = Vector3.new(0.28, 0.7, 0.38),
+		CFrame = CFrame.new(0, -0.34, 0.72), Color = Color3.fromRGB(24, 24, 26), Material = Enum.Material.SmoothPlastic },
+}
+
+-- Fallback so an unknown id (hotkey typo, future weapon) still shows a gun.
+BUILDERS.Default = BUILDERS.Pistol
+
+local function specsFor(weaponId: string): { PartSpec }
+	local spec: any = (BUILDERS :: any)[weaponId]
+	if spec then
+		return spec :: { PartSpec }
+	end
+	return BUILDERS.Default :: { PartSpec }
+end
+
+local function displayNameOf(weaponId: string): string
+	local defs: any = Config.Weapons
+	local def: any = defs[weaponId]
+	if def and type(def.DisplayName) == "string" then
+		return def.DisplayName
+	end
+	return weaponId
+end
+
+----------------------------------------------------------------------
+-- Equip / clear
+----------------------------------------------------------------------
+
+-- Destroys any existing rig on the character (idempotent before every attach).
+local function destroyRig(character: Instance?)
+	if character == nil then
+		return
+	end
+	local function kill(inst: any)
+		pcall(function()
+			local c: any = inst
+			c:Destroy()
+		end)
+	end
+	pcall(function()
+		local existing: any = (character :: any):FindFirstChild(RIG_NAME)
+		if existing then
+			kill(existing)
+		end
+	end)
+end
+
+local function buildParts(weaponId: string): (any, any)
+	local model = Instance.new("Model")
+	model.Name = RIG_NAME
+
+	local specs = specsFor(weaponId)
+	-- The weld spine: prefer explicit body/receiver parts, else the first spec.
+	local primary: any = nil
+	local parts: { any } = {}
+
+	for i, spec in ipairs(specs) do
+		local part = Instance.new("Part")
+		part.Name = spec.Name
+		part.Size = spec.Size
+		part.Color = spec.Color
+		part.Material = spec.Material
+		part.CFrame = spec.CFrame
+		part.CanCollide = false
+		part.CanTouch = false
+		part.CanQuery = false
+		part.CastShadow = false
+		part.Massless = true
+		part:SetAttribute("RigIndex", i)
+		part.Parent = model
+		parts[#parts + 1] = part
+		if primary == nil then
+			primary = part
+		elseif spec.Name == "Body" or spec.Name == "Receiver" then
+			primary = part
+		end
+	end
+
+	if not primary then
+		return model, nil
+	end
+
+	-- Weld every part to the spine so the gun is one rigid assembly; without
+	-- this the loose parts fall apart the moment they touch physics.
+	for _, part in ipairs(parts) do
+		if part ~= primary then
+			local weld = Instance.new("WeldConstraint")
+			weld.Name = "ZA_RigPartWeld"
+			weld.Part0 = primary
+			weld.Part1 = part
+			weld.Parent = part
+		end
+	end
+
+	return model, primary
+end
+
+-- Attaches the gun for `weaponId` to the player's right hand. Safe to call on
+-- every weapon change; rebuilds from scratch so shape and stats can never drift.
+function WeaponView.Equip(player: any, weaponId: string)
+	if player == nil then
+		return
+	end
+	local character: any = player.Character
+	if not character then
+		return
+	end
+
+	-- Hand placement: R15 avatars have RightHand; R6 has Right Arm. Either way
+	-- the rig must keep working, hence the fallback chain.
+	local hand: any = character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm")
+	local root: any = character:FindFirstChild("HumanoidRootPart")
+	if not hand or not root then
+		return
+	end
+
+	destroyRig(character)
+
+	local rigModel, spine = buildParts(weaponId)
+	if not spine then
+		pcall(function()
+			rigModel:Destroy()
+		end)
+		return
+	end
+	rigModel.PrimaryPart = spine
+
+	local hrp: any = root
+	-- Hold the gun slightly ahead of the hand along the character's facing so
+	-- the muzzle visibly points where they aim.
+	local look: any = hrp.CFrame.LookVector
+	local right: any = hrp.CFrame.RightVector
+	local holdPos: Vector3 = hand.Position
+		+ Vector3.new(look.X * 0.7, 0.25, look.Z * 0.7)
+		+ Vector3.new(right.X * 0.1, 0, right.Z * 0.1)
+	local holdCFrame: CFrame = CFrame.lookAt(holdPos, holdPos + look)
+	rigModel:PivotTo(holdCFrame)
+	rigModel.Parent = character
+
+	-- WeldConstraint keeps the relative placement captured by the pivot above.
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "ZA_WeaponWeld"
+	weld.Part0 = hand
+	weld.Part1 = spine
+	weld.Parent = spine
+
+	-- Label the weapon so hovering players and future systems can read it.
+	pcall(function()
+		rigModel:SetAttribute("WeaponId", weaponId)
+		rigModel:SetAttribute("DisplayName", displayNameOf(weaponId))
+	end)
+end
+
+function WeaponView.Clear(player: any)
+	if player == nil then
+		return
+	end
+	local ok, char = pcall(function()
+		return player.Character
+	end)
+	if ok and char then
+		destroyRig(char)
+	end
+end
+
+return WeaponView
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="20">
+        <Properties>
           <string name="Name">Weapons</string>
           <string name="Source"><![CDATA[--!strict
 ------------------------------------------------------------------------------
@@ -6535,6 +6798,7 @@ type EconomyApi = {
 local Weapons = {}
 
 local Effects = require(script.Parent.Effects)
+local WeaponView = require(script.Parent.WeaponView)
 
 local Players = game:GetService("Players")
 
@@ -6790,6 +7054,10 @@ function Weapons.Refresh(player: Player)
 		e.AmmoInMag = mag
 	end
 	Weapons.Replicate(player)
+	-- Keep the visible gun in hand in sync with what they actually use.
+	pcall(function()
+		WeaponView.Equip(player, weaponId)
+	end)
 end
 
 -- Hot-swaps to another owned weapon WITHOUT restocking ammo.
@@ -6816,6 +7084,9 @@ function Weapons.Equip(player: Player, weaponId: string)
 	e.ReloadEndsAt = nil
 	e.AmmoInMag = magazineSize(def, Weapons.GetModifiers(player))
 	Weapons.Replicate(player)
+	pcall(function()
+		WeaponView.Equip(player, weaponId)
+	end)
 end
 
 ------------------------------------------------------------------------------
@@ -7352,6 +7623,35 @@ end
 
 local booted = false
 
+-- One-time per player: tells a freshly spawned player, in one line, how they
+-- shoot. Pairs with the Instructions panel for the full how-to.
+local armedNotified: { [Player]: boolean } = {}
+
+local function notifyArmed(player: Player)
+	if armedNotified[player] then
+		return
+	end
+	armedNotified[player] = true
+	-- Fired after spawn settles so it does not battle the HUD boot-up noise.
+	task.delay(4.5, function()
+		pcall(function()
+			Remotes.Notify():FireClient(
+				player,
+				"You are armed: Left Mouse to fire · R to reload · 1–4 to switch"
+			)
+		end)
+	end)
+end
+
+-- Attaches the previously equipped weapon's visual rig to a fresh character.
+-- The rig lives inside the character model, so every respawn needs a new copy.
+function Weapons.EquipCurrentView(player: Player)
+	pcall(function()
+		local e = Weapons.GetEntry(player)
+		WeaponView.Equip(player, e.WeaponId)
+	end)
+end
+
 function Weapons.Init()
 	if booted then
 		return
@@ -7365,11 +7665,30 @@ function Weapons.Init()
 		task.delay(1, function()
 			Weapons.Replicate(player)
 		end)
+		pcall(function()
+			player.CharacterAdded:Connect(function()
+				-- Let the character finish assembling before the weld lands.
+				task.delay(0.6, function()
+					Weapons.EquipCurrentView(player)
+				end)
+			end)
+		end)
+		-- Character may already exist when we run.
+		if player.Character then
+			task.delay(0.6, function()
+				Weapons.EquipCurrentView(player)
+			end)
+		end
+		pcall(notifyArmed, player)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)
 		entries[player] = nil
 		fireWindows[player] = nil
+		armedNotified[player] = nil
+		pcall(function()
+			WeaponView.Clear(player)
+		end)
 	end)
 
 	-- Client -> Server. The client sends a single payload table; it arrives
@@ -7404,18 +7723,24 @@ function Weapons.PlayerJoined(player: Player)
 		Weapons.GetEntry(player)
 		Weapons.Replicate(player)
 	end)
+	Weapons.EquipCurrentView(player)
+	pcall(notifyArmed, player)
 end
 
 function Weapons.PlayerLeft(player: Player)
 	entries[player] = nil
 	fireWindows[player] = nil
+	armedNotified[player] = nil
+	pcall(function()
+		WeaponView.Clear(player)
+	end)
 end
 
 return Weapons
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="20">
+      <Item class="ModuleScript" referent="21">
         <Properties>
           <string name="Name">ZombieAI</string>
           <string name="Source"><![CDATA[--!strict
@@ -8499,11 +8824,11 @@ return ZombieAI
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="21">
+  <Item class="ServerScriptService" referent="22">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="22">
+    <Item class="Script" referent="23">
       <Properties>
         <string name="Name">GameServer</string>
         <token name="RunContext">0</token>
@@ -8817,20 +9142,20 @@ trace(string.format("%s v%s boot complete", Config.GameName, Config.Version))
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterGui" referent="23">
+  <Item class="StarterGui" referent="24">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="24">
+  <Item class="StarterPlayer" referent="25">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="25">
+    <Item class="StarterPlayerScripts" referent="26">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="26">
+      <Item class="LocalScript" referent="27">
         <Properties>
           <string name="Name">ClientController</string>
           <string name="Source"><![CDATA[--!strict
@@ -9059,7 +9384,17 @@ local function aimPointAndDirection(): (Vector3, Vector3)
 	-- the player is actually looking at), which makes hitscan feel correct.
 	local params: any = Instance.new("RaycastParams")
 	params.FilterType = Enum.RaycastFilterType.Blacklist
-	params.FilterDescendantsInstances = {}
+	-- The camera sits behind the character in third person: without blacklisting
+	-- our own body this ray stops on our own torso and the aim point jumps to
+	-- the shooter's chest instead of what they are looking at.
+	local excluded: { any } = {}
+	pcall(function()
+		local ch: any = localPlayer and localPlayer.Character
+		if ch then
+			excluded = { ch }
+		end
+	end)
+	params.FilterDescendantsInstances = excluded
 	params.IgnoreWater = true
 
 	local maxRange: number = 500
@@ -9622,7 +9957,7 @@ return nil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="27">
+      <Item class="LocalScript" referent="28">
         <Properties>
           <string name="Name">HUD</string>
           <string name="Source"><![CDATA[--!strict
@@ -10834,7 +11169,7 @@ return HUD
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="28">
+      <Item class="LocalScript" referent="29">
         <Properties>
           <string name="Name">Instructions</string>
           <string name="Source"><![CDATA[--!strict
@@ -10876,7 +11211,7 @@ local CONTROLS: { ControlRow } = {
 	{ Key = "Left Mouse", Desc = "Fire your weapon" },
 	{ Key = "R", Desc = "Reload" },
 	{ Key = "Shift", Desc = "Sprint — faster than zombies, use it to escape" },
-	{ Key = "E", Desc = "Interact — open doors, buy from machines" },
+	{ Key = "E", Desc = "Hold near doors, vending machines and other objects to use them" },
 	{ Key = "B", Desc = "Open the shop between waves" },
 	{ Key = "1 – 4", Desc = "Switch weapon" },
 	{ Key = "F1 / H", Desc = "Show or hide these instructions" },
@@ -10885,8 +11220,10 @@ local CONTROLS: { ControlRow } = {
 local OBJECTIVE_LINES: { string } = {
 	"The horde has overrun Lovisedalsskolan in Vallentuna — the schoolyard, the pitch and the parking lot.",
 	"Survive escalating waves of the undead and get as deep as you can.",
+	"You start with a sidearm: aim with the crosshair, Left Mouse to shoot, R to reload.",
 	"Zombies spawn around you and hunt you down — they are faster than you walk, so keep moving.",
 	"Kill them for coins. Aim for the head: headshots pay double and kill far quicker.",
+	"Walk up to doors, vending machines and mystery boxes and HOLD E when the prompt appears.",
 	"Between waves the shop opens. Spend coins on better weapons and perks.",
 	"Open doors to unlock new zones — the pitch, the sports hall and stronger gear lie deeper in.",
 	"Reach wave " .. tostring(Config.Wave.ExtractionWave) .. " to extract and win the run.",
@@ -10945,7 +11282,7 @@ local function build(parent: any)
 	gui.Parent = parent
 
 	panel = newFrame("HelpPanel")
-	panel.Size = UDim2.new(0.52, 0, 0.62, 0)
+	panel.Size = UDim2.new(0.52, 0, 0.7, 0)
 	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.BackgroundColor3 = COL_BG
@@ -11148,7 +11485,7 @@ return Instructions
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="29">
+      <Item class="LocalScript" referent="30">
         <Properties>
           <string name="Name">Interact</string>
           <string name="Source"><![CDATA[--!strict
@@ -11377,7 +11714,7 @@ return Interact
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="30">
+      <Item class="LocalScript" referent="31">
         <Properties>
           <string name="Name">ShopUI</string>
           <string name="Source"><![CDATA[--!strict

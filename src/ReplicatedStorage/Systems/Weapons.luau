@@ -78,6 +78,7 @@ type EconomyApi = {
 local Weapons = {}
 
 local Effects = require(script.Parent.Effects)
+local WeaponView = require(script.Parent.WeaponView)
 
 local Players = game:GetService("Players")
 
@@ -333,6 +334,10 @@ function Weapons.Refresh(player: Player)
 		e.AmmoInMag = mag
 	end
 	Weapons.Replicate(player)
+	-- Keep the visible gun in hand in sync with what they actually use.
+	pcall(function()
+		WeaponView.Equip(player, weaponId)
+	end)
 end
 
 -- Hot-swaps to another owned weapon WITHOUT restocking ammo.
@@ -359,6 +364,9 @@ function Weapons.Equip(player: Player, weaponId: string)
 	e.ReloadEndsAt = nil
 	e.AmmoInMag = magazineSize(def, Weapons.GetModifiers(player))
 	Weapons.Replicate(player)
+	pcall(function()
+		WeaponView.Equip(player, weaponId)
+	end)
 end
 
 ------------------------------------------------------------------------------
@@ -895,6 +903,35 @@ end
 
 local booted = false
 
+-- One-time per player: tells a freshly spawned player, in one line, how they
+-- shoot. Pairs with the Instructions panel for the full how-to.
+local armedNotified: { [Player]: boolean } = {}
+
+local function notifyArmed(player: Player)
+	if armedNotified[player] then
+		return
+	end
+	armedNotified[player] = true
+	-- Fired after spawn settles so it does not battle the HUD boot-up noise.
+	task.delay(4.5, function()
+		pcall(function()
+			Remotes.Notify():FireClient(
+				player,
+				"You are armed: Left Mouse to fire · R to reload · 1–4 to switch"
+			)
+		end)
+	end)
+end
+
+-- Attaches the previously equipped weapon's visual rig to a fresh character.
+-- The rig lives inside the character model, so every respawn needs a new copy.
+function Weapons.EquipCurrentView(player: Player)
+	pcall(function()
+		local e = Weapons.GetEntry(player)
+		WeaponView.Equip(player, e.WeaponId)
+	end)
+end
+
 function Weapons.Init()
 	if booted then
 		return
@@ -908,11 +945,30 @@ function Weapons.Init()
 		task.delay(1, function()
 			Weapons.Replicate(player)
 		end)
+		pcall(function()
+			player.CharacterAdded:Connect(function()
+				-- Let the character finish assembling before the weld lands.
+				task.delay(0.6, function()
+					Weapons.EquipCurrentView(player)
+				end)
+			end)
+		end)
+		-- Character may already exist when we run.
+		if player.Character then
+			task.delay(0.6, function()
+				Weapons.EquipCurrentView(player)
+			end)
+		end
+		pcall(notifyArmed, player)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)
 		entries[player] = nil
 		fireWindows[player] = nil
+		armedNotified[player] = nil
+		pcall(function()
+			WeaponView.Clear(player)
+		end)
 	end)
 
 	-- Client -> Server. The client sends a single payload table; it arrives
@@ -947,11 +1003,17 @@ function Weapons.PlayerJoined(player: Player)
 		Weapons.GetEntry(player)
 		Weapons.Replicate(player)
 	end)
+	Weapons.EquipCurrentView(player)
+	pcall(notifyArmed, player)
 end
 
 function Weapons.PlayerLeft(player: Player)
 	entries[player] = nil
 	fireWindows[player] = nil
+	armedNotified[player] = nil
+	pcall(function()
+		WeaponView.Clear(player)
+	end)
 end
 
 return Weapons

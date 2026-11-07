@@ -37,7 +37,7 @@ local CONTROLS: { ControlRow } = {
 	{ Key = "Left Mouse", Desc = "Fire your weapon" },
 	{ Key = "R", Desc = "Reload" },
 	{ Key = "Shift", Desc = "Sprint — faster than zombies, use it to escape" },
-	{ Key = "E", Desc = "Interact — open doors, buy from machines" },
+	{ Key = "E", Desc = "Hold near doors, vending machines and other objects to use them" },
 	{ Key = "B", Desc = "Open the shop between waves" },
 	{ Key = "1 – 4", Desc = "Switch weapon" },
 	{ Key = "F1 / H", Desc = "Show or hide these instructions" },
@@ -46,8 +46,10 @@ local CONTROLS: { ControlRow } = {
 local OBJECTIVE_LINES: { string } = {
 	"The horde has overrun Lovisedalsskolan in Vallentuna — the schoolyard, the pitch and the parking lot.",
 	"Survive escalating waves of the undead and get as deep as you can.",
+	"You start with a sidearm: aim with the crosshair, Left Mouse to shoot, R to reload.",
 	"Zombies spawn around you and hunt you down — they are faster than you walk, so keep moving.",
 	"Kill them for coins. Aim for the head: headshots pay double and kill far quicker.",
+	"Walk up to doors, vending machines and mystery boxes and HOLD E when the prompt appears.",
 	"Between waves the shop opens. Spend coins on better weapons and perks.",
 	"Open doors to unlock new zones — the pitch, the sports hall and stronger gear lie deeper in.",
 	"Reach wave " .. tostring(Config.Wave.ExtractionWave) .. " to extract and win the run.",
@@ -106,7 +108,7 @@ local function build(parent: any)
 	gui.Parent = parent
 
 	panel = newFrame("HelpPanel")
-	panel.Size = UDim2.new(0.52, 0, 0.62, 0)
+	panel.Size = UDim2.new(0.52, 0, 0.7, 0)
 	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.BackgroundColor3 = COL_BG

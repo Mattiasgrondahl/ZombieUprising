@@ -224,7 +224,17 @@ local function aimPointAndDirection(): (Vector3, Vector3)
 	-- the player is actually looking at), which makes hitscan feel correct.
 	local params: any = Instance.new("RaycastParams")
 	params.FilterType = Enum.RaycastFilterType.Blacklist
-	params.FilterDescendantsInstances = {}
+	-- The camera sits behind the character in third person: without blacklisting
+	-- our own body this ray stops on our own torso and the aim point jumps to
+	-- the shooter's chest instead of what they are looking at.
+	local excluded: { any } = {}
+	pcall(function()
+		local ch: any = localPlayer and localPlayer.Character
+		if ch then
+			excluded = { ch }
+		end
+	end)
+	params.FilterDescendantsInstances = excluded
 	params.IgnoreWater = true
 
 	local maxRange: number = 500
