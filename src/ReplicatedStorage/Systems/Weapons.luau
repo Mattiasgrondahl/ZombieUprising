@@ -335,6 +335,32 @@ function Weapons.Refresh(player: Player)
 	Weapons.Replicate(player)
 end
 
+-- Hot-swaps to another owned weapon WITHOUT restocking ammo.
+--
+-- Refresh() deliberately tops everything up because it services purchases and
+-- magazine perks. If the 1-4 hotkeys went through it too, players could cycle
+-- weapons for infinite reserve — a free pass around the entire ammo economy.
+-- A swap still grants a full magazine so it is instantly useful, but reserve
+-- carries over untouched.
+function Weapons.Equip(player: Player, weaponId: string)
+	local def = defOf(weaponId)
+	if not def then
+		return
+	end
+	local e = entries[player]
+	if not e then
+		return
+	end
+	if e.WeaponId == weaponId then
+		return
+	end
+	e.WeaponId = weaponId
+	e.Reloading = false
+	e.ReloadEndsAt = nil
+	e.AmmoInMag = magazineSize(def, Weapons.GetModifiers(player))
+	Weapons.Replicate(player)
+end
+
 ------------------------------------------------------------------------------
 -- Rate limiting / input validation
 ------------------------------------------------------------------------------

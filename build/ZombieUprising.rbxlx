@@ -17,7 +17,38 @@
 local Config = {}
 
 Config.GameName = "Zombie Uprising"
-Config.Version = "1.0.0"
+Config.Version = "2.2.0"
+
+----------------------------------------------------------------------
+-- Audio
+--
+-- Roblox cannot synthesize waveforms from Luau, so music and SFX come from
+-- catalogue asset ids. Every id is Roblox-owned and long-lived. If any fails
+-- to load the Music/Audio system degrades silently rather than erroring.
+----------------------------------------------------------------------
+Config.Audio = {
+	Enabled = true,
+	MusicVolume = 0.35,
+	SFXVolume = 0.6,
+
+	-- Ambient drone looped from the moment the server boots.
+	AmbientMusicId = "rbxassetid://1843941676",  -- dark ambient drone
+	AmbientVolume = 0.22,
+
+	-- Combat music crossfades in when a wave goes active; tempo/pitch rises
+	-- with wave number so late waves feel more frantic.
+	WaveMusicId = "rbxassetid://9044416607",     -- tense combat loop
+	WaveMusicVolume = 0.30,
+	WavePitchBase = 1.0,
+	WavePitchPerWave = 0.01,
+	WavePitchMax = 1.35,
+
+	-- Boss waves get their own heavier cue.
+	BossMusicId = "rbxassetid://9125402737",
+	BossMusicVolume = 0.42,
+
+	MusicFadeTime = 1.8,
+}
 
 ----------------------------------------------------------------------
 -- Wave / match flow
@@ -26,7 +57,8 @@ Config.Wave = {
 	IntermissionTime = 20,      -- seconds of shop phase between waves
 	FirstWaveDelay = 8,
 	MaxConcurrentZombies = 60,  -- hard ceiling for perf safety
-	SpawnBatchInterval = 0.75,  -- stagger spawns within a wave
+	-- Faster batches: a swarm should pour in, not trickle one every 0.75s.
+	SpawnBatchInterval = 0.28,
 	BossEveryNWaves = 5,
 	-- Special wave types to break mid-game monotony.
 	-- RunnerWave: all-fast. SwarmWave: many weak. BruteWave: few tanky.
@@ -41,11 +73,14 @@ Config.Wave = {
 	BruteHealthMult = 1.8,
 	-- Extra zombies per additional player (sub-linear).
 	MultiplayerCountScale = 0.65,
-	BaseZombieCount = 6,
-	CountGrowthPerWave = 3.4,
-	HPScalePerWave = 1.09,
-	SpeedScalePerWave = 1.02,
-	MaxSpeedScale = 1.75,
+	BaseZombieCount = 8,
+	CountGrowthPerWave = 3.8,
+	-- Flattened from 1.18: geometric HP growth outran weapon damage so hard
+	-- that waves became mathematically unwinnable around wave 20. Many weak
+	-- zombies is the zombie-rouguelike feel; few tanky ones is a slog.
+	HPScalePerWave = 1.085,
+	SpeedScalePerWave = 1.015,
+	MaxSpeedScale = 1.55,
 	DamageScalePerWave = 1.05,
 }
 
@@ -57,7 +92,9 @@ Config.Player = {
 	BaseWalkSpeed = 16,
 	SprintSpeed = 24,
 	RespawnDelay = 5,
-	StartingCoins = 0,
+	-- Not zero: players must be able to afford the first door / perk without
+	-- a lucky early wave, otherwise a bad round one can stall the whole run.
+	StartingCoins = 150,
 	InvulnerabilityAfterSpawn = 3.0,
 	-- Health at/below which a player is knocked down instead of killed.
 	DownedThreshold = 1,
@@ -106,7 +143,10 @@ local Zombies: { [string]: ZombieArchetype } = {
 		Id = "Walker",
 		DisplayName = "Walker",
 		Health = 60,
-		WalkSpeed = 12,
+		-- Walkers must be faster than the player's WALK speed (16) or there is
+		-- no pressure to shoot: you could stroll away forever. They stay slower
+		-- than SPRINT (24) so escaping is possible but costs stamina/distance.
+		WalkSpeed = 18,
 		Damage = 12,
 		AttackRange = 4.5,
 		AttackCooldown = 1.2,
@@ -121,7 +161,8 @@ local Zombies: { [string]: ZombieArchetype } = {
 		Id = "Runner",
 		DisplayName = "Runner",
 		Health = 40,
-		WalkSpeed = 19,
+		-- Faster than the player's sprint: runners WILL catch you.
+		WalkSpeed = 27,
 		Damage = 9,
 		AttackRange = 4.0,
 		AttackCooldown = 0.8,
@@ -370,6 +411,10 @@ Config.Map = {
 	DoorCost = 400,           -- base cost; later doors cost more
 	DoorCostGrowth = 1.5,
 	DoorThickness = 3,
+
+	-- The arena is themed as a real school site (aerial model below).
+	SchoolName = "LOVISEDALSSKOLAN",
+	SchoolTown = "Vallentuna kommun",
 }
 
 -- Buyable progression: machines and utilities placed per zone.
@@ -605,6 +650,7 @@ export type RemoteMap = {
 	RequestRespawn: RemoteEvent,
 	RequestOpenDoor: RemoteEvent,
 	RequestMachine: RemoteEvent,
+	RequestSwitchWeapon: RemoteEvent,
 
 	-- Server -> Client
 	WeaponStateChanged: RemoteEvent,
@@ -646,6 +692,7 @@ function Remotes.RequestPurchasePerk(): RemoteEvent return get("RequestPurchaseP
 function Remotes.RequestRespawn(): RemoteEvent return get("RequestRespawn") end
 function Remotes.RequestOpenDoor(): RemoteEvent return get("RequestOpenDoor") end
 function Remotes.RequestMachine(): RemoteEvent return get("RequestMachine") end
+function Remotes.RequestSwitchWeapon(): RemoteEvent return get("RequestSwitchWeapon") end
 
 function Remotes.WeaponStateChanged(): RemoteEvent return get("WeaponStateChanged") end
 function Remotes.PlayerStatsChanged(): RemoteEvent return get("PlayerStatsChanged") end
@@ -662,6 +709,7 @@ function Remotes.InitServer()
 		"RequestFire", "RequestReload", "RequestPurchaseWeapon", "RequestPurchasePerk", "RequestRespawn",
 		"RequestOpenDoor",
 		"RequestMachine",
+		"RequestSwitchWeapon",
 		"WeaponStateChanged", "PlayerStatsChanged", "WaveStateChanged", "DamageDealt",
 		"ZombieDamagedPlayer", "ShopStateChanged", "Notify", "RunEnded",
 	}) do
@@ -1226,8 +1274,24 @@ end
 -- Public API
 ----------------------------------------------------------------------
 
+-- Doors MapBuilder marked as already-open (the starting exit) are adopted on
+-- first use, so MaxReachableZone is correct from the moment the map exists.
+local function syncBuiltDoors()
+	local folder = doorsFolder()
+	if not folder then
+		return
+	end
+	for _, child in ipairs(folder:GetChildren()) do
+		local any: any = child
+		local index: number = tonumber(any:GetAttribute("DoorIndex")) or 0
+		if index > 0 and any:GetAttribute("Open") == true then
+			opened[index] = true
+		end
+	end
+end
+
 function Doors.Init()
-	-- Server: listen for door purchase requests from clients.
+	pcall(syncBuiltDoors)
 	pcall(function()
 		Remotes.RequestOpenDoor().OnServerEvent:Connect(function(player: Player, index: any)
 			local doorIndex: number = tonumber(index) or 0
@@ -1256,7 +1320,9 @@ function Doors.TryOpen(player: Player, index: number): (boolean, string?)
 	local any: any = door
 	local cost: number = tonumber(any:GetAttribute("Cost")) or Config.Map.DoorCost
 
-	if not spendCoins(player, cost) then
+	-- A zero-cost door is the starting exit: opening it must never be gated by
+	-- funds, or a brand-new player could be trapped in the spawn room.
+	if cost > 0 and not spendCoins(player, cost) then
 		return false, "InsufficientFunds"
 	end
 
@@ -3073,12 +3139,26 @@ return Machines
         <Properties>
           <string name="Name">MapBuilder</string>
           <string name="Source"><![CDATA[--!strict
--- Procedurally generates the entire arena at runtime: floor, walls, cover,
--- spawn rings, lighting and atmosphere. Zero external assets are required,
--- so the built place file is self-contained and immediately publishable.
+-- Procedurally generates the map at runtime: Lovisedalsskolan, Vallentuna.
+--
+-- Layout is modelled on the aerial site plan of the real school:
+--   * red-brick school wings with dark (one white) roofs around a paved yard
+--   * grey paving-stone schoolyard with benches, planters and a playground
+--   * forest-turf football pitch with goals and lines on the east side
+--   * asphalt parking lot with white stalls and cars to the south (spawn)
+--   * basketball court west of the yard
+--   * a ring of pine forest outside a low black fence (Vallentuna is pine
+--     forest), with the boundary itself made of invisible walls so the world
+--     reads as "fenced school grounds" instead of a walled arena
+--
+-- The four-zone progression and buyable doors are preserved: interior
+-- boundaries are styled as additional brick building wings with a door gap,
+-- which the real site reads as buildings anyway. Zone 1 (parking + arrival
+-- yard) is where players spawn; the free first exit leads north into the
+-- school wings.
 --
 -- Geometry is driven by a fixed seed (Config.Map.Seed) so every build produces
--- identical geometry.
+-- identical geometry. Zero external assets are required.
 
 local Config = require(script.Parent.Parent.Shared.Config)
 local RNG = require(script.Parent.Parent.Shared.RNG)
@@ -3120,6 +3200,36 @@ local function mapSettings(): MapSettings
 	return Config.Map :: MapSettings
 end
 
+----------------------------------------------------------------------
+-- Palette (matched to the school photos: red brick, black fascia, grey yard)
+----------------------------------------------------------------------
+
+local COL_BRICK = Color3.fromRGB(150, 78, 58)      -- photo red brick
+local COL_FASCIA = Color3.fromRGB(28, 30, 36)      -- black roof fascia / trim
+local COL_ROOF = Color3.fromRGB(34, 36, 46)        -- dark navy flat roofs
+local COL_ROOF_WHITE = Color3.fromRGB(216, 218, 222)
+local COL_METAL_DARK = Color3.fromRGB(96, 102, 112)
+local COL_PAVE = Color3.fromRGB(146, 146, 152)     -- yard paving stones
+local COL_PAVE_DARK = Color3.fromRGB(126, 126, 134) -- paving seams
+local COL_GRASS = Color3.fromRGB(76, 98, 60)       -- pine-forest grass
+local COL_TURF = Color3.fromRGB(30, 124, 58)       -- artificial pitch turf
+local COL_ASPHALT = Color3.fromRGB(56, 58, 63)
+local COL_WOOD = Color3.fromRGB(146, 90, 56)       -- photobench red-brown wood
+local COL_METAL = Color3.fromRGB(120, 124, 132)    -- bench frames / racks
+local COL_FENCE = Color3.fromRGB(40, 42, 46)       -- black yard fence
+local COL_PINE = Color3.fromRGB(36, 72, 42)
+local COL_TRUNK = Color3.fromRGB(86, 62, 44)
+local COL_GLASS = Color3.fromRGB(38, 52, 66)
+local COL_WHITE = Color3.fromRGB(235, 236, 238)
+local COL_SAND = Color3.fromRGB(196, 176, 140)
+local COL_FLAG_BLUE = Color3.fromRGB(0, 106, 167)
+local COL_FLAG_YELLOW = Color3.fromRGB(254, 198, 0)
+
+-- Interior zone boundaries are built as brick wings at school scale.
+local WING_WALL_HEIGHT = 16
+local WING_ROOF_HEIGHT = 2
+local DOOR_HEIGHT = WING_WALL_HEIGHT + WING_ROOF_HEIGHT -- 18
+
 local function newPart(props: { [string]: any }): Part
 	local p = Instance.new("Part")
 	p.Anchored = true
@@ -3144,51 +3254,961 @@ local function ensureRoot(): Folder
 	return root
 end
 
-local function buildFloor(root: Folder, m: MapSettings)
-	local size: number = m.ArenaSize
-	local floor = newPart({
-		Name = "Floor",
-		Size = Vector3.new(size, 4, size),
-		Position = Vector3.new(0, -2, 0),
-		Material = m.FloorMaterial,
-		Color = Color3.fromRGB(72, 72, 78),
-	})
-	floor.Parent = root
+----------------------------------------------------------------------
+-- Ground: pine-forest base, paved yard, parking, paths
+----------------------------------------------------------------------
 
-	-- Faint grid so players can read distance while moving.
-	local grid = newPart({
-		Name = "GridOverlay",
-		Size = Vector3.new(size, 0.2, size),
-		Position = Vector3.new(0, 0.05, 0),
-		Material = Enum.Material.SmoothPlastic,
-		Color = Color3.fromRGB(60, 60, 66),
-		Transparency = 0.85,
+local function buildSite(root: Folder, _m: MapSettings)
+	-- Forest floor across the whole site.
+	local ground = newPart({
+		Name = "Site_Ground",
+		Size = Vector3.new(260, 4, 260),
+		Position = Vector3.new(0, -2, 0),
+		Material = Enum.Material.Grass,
+		Color = COL_GRASS,
 	})
-	grid.Parent = root
+	ground.Parent = root
+
+	-- The paved schoolyard between the buildings (the photo's grey tile).
+	local yard = newPart({
+		Name = "SchoolYard",
+		Size = Vector3.new(190, 0.4, 122),
+		Position = Vector3.new(-20, 0.2, -9),
+		Material = Enum.Material.Concrete,
+		Color = COL_PAVE,
+	})
+	yard.Parent = root
+
+	-- Paving seams so the slab reads as paving stones, not one grey plane.
+	for i = 0, 11 do
+		local x = -107 + i * 16
+		local seam = newPart({
+			Name = "YardSeam_X" .. tostring(i),
+			Size = Vector3.new(0.6, 0.05, 122),
+			Position = Vector3.new(x, 0.41, -9),
+			Material = Enum.Material.Concrete,
+			Color = COL_PAVE_DARK,
+			CanCollide = false,
+		})
+		seam.Parent = root
+	end
+	for i = 0, 6 do
+		local z = -62 + i * 16
+		local seam = newPart({
+			Name = "YardSeam_Z" .. tostring(i),
+			Size = Vector3.new(190, 0.05, 0.6),
+			Position = Vector3.new(-20, 0.41, z),
+			Material = Enum.Material.Concrete,
+			Color = COL_PAVE_DARK,
+			CanCollide = false,
+		})
+		seam.Parent = root
+	end
+
+	-- Parking asphalt (south, zone 1).
+	local parking = newPart({
+		Name = "ParkingLot",
+		Size = Vector3.new(100, 0.4, 47),
+		Position = Vector3.new(10, 0.2, -101.5),
+		Material = Enum.Material.Asphalt,
+		Color = COL_ASPHALT,
+	})
+	parking.Parent = root
+
+	-- Drive/park path from the lot to the arrival area.
+	local path = newPart({
+		Name = "ParkingPath",
+		Size = Vector3.new(60, 0.3, 8),
+		Position = Vector3.new(10, 0.35, -74),
+		Material = Enum.Material.Asphalt,
+		Color = COL_ASPHALT,
+	})
+	path.Parent = root
+
+	-- Football-pitch turf (east, zone 4).
+	local turf = newPart({
+		Name = "PitchTurf",
+		Size = Vector3.new(94, 0.4, 48),
+		Position = Vector3.new(70, 0.2, 100),
+		Material = Enum.Material.Grass,
+		Color = COL_TURF,
+	})
+	turf.Parent = root
 end
 
-local function buildWalls(root: Folder, m: MapSettings)
+----------------------------------------------------------------------
+-- School buildings: brick blocks with roofs, windows, entrance canopy
+----------------------------------------------------------------------
+
+-- One school wing: solid block + overhanging flat roof + window bands.
+local function addBuilding(root: Folder, cfg: {
+	Name: string,
+	Center: Vector3,
+	Size: Vector3,
+	RoofColor: Color3,
+	Windows: { { face: string, positions: { number }, y: number, size: Vector3, side: number? } }?,
+})
+	local block = newPart({
+		Name = cfg.Name,
+		Size = cfg.Size,
+		Position = cfg.Center,
+		Material = Enum.Material.Brick,
+		Color = COL_BRICK,
+	})
+	block.Parent = root
+
+	local roof = newPart({
+		Name = cfg.Name .. "_Roof",
+		Size = Vector3.new(cfg.Size.X + 6, 2, cfg.Size.Z + 6),
+		Position = Vector3.new(cfg.Center.X, cfg.Center.Y + cfg.Size.Y / 2 + 1, cfg.Center.Z),
+		Material = Enum.Material.Slate,
+		Color = COL_ROOF,
+	})
+	-- Dark fascia trim between wall and roof, like the photos.
+	local fascia = newPart({
+		Name = cfg.Name .. "_Fascia",
+		Size = Vector3.new(cfg.Size.X + 6.4, 1.2, cfg.Size.Z + 6.4),
+		Position = Vector3.new(cfg.Center.X, cfg.Center.Y + cfg.Size.Y / 2 + 0.2, cfg.Center.Z),
+		Material = Enum.Material.Metal,
+		Color = COL_FASCIA,
+		CanCollide = false,
+	})
+	roof.Color = cfg.RoofColor
+	roof.Parent = root
+	fascia.Parent = root
+
+	if cfg.Windows then
+		for _, band in ipairs(cfg.Windows) do
+			local sideNum: number = band.side or 1
+			for _, a in ipairs(band.positions) do
+				local pos: Vector3
+				if band.face == "X" then
+					pos = Vector3.new(
+						cfg.Center.X + sideNum * (cfg.Size.X / 2 + 0.05),
+						band.y,
+						a)
+				else
+					pos = Vector3.new(
+						a,
+						band.y,
+						cfg.Center.Z + sideNum * (cfg.Size.Z / 2 + 0.05))
+				end
+				local isXFace = band.face == "X"
+				local w = newPart({
+					Name = "Window",
+					Size = if isXFace
+						then Vector3.new(0.4, band.size.Y, band.size.X)
+						else Vector3.new(band.size.X, band.size.Y, 0.4),
+					Position = pos,
+					Material = Enum.Material.Glass,
+					Color = COL_GLASS,
+					Reflectance = 0.15,
+					CanCollide = false,
+				})
+				w.Parent = root
+			end
+		end
+	end
+end
+
+local function buildBuildings(root: Folder)
+	-- Zone 2 — classroom wing A (west long wing). Windows on the yard-facing
+	-- (south, +Z) face and on the east end facing the open playground side.
+	addBuilding(root, {
+		Name = "WingA_Classrooms",
+		Center = Vector3.new(-78, 11, -41.5),
+		Size = Vector3.new(60, 22, 33),
+		RoofColor = COL_ROOF,
+		Windows = {
+			{ face = "Z", positions = { -100, -89, -67, -56 }, y = 9, size = Vector3.new(6, 5, 0), side = 1 },
+			{ face = "X", positions = { -52, -42, -32 }, y = 9, size = Vector3.new(6, 5, 0), side = 1 },
+		},
+	})
+	-- Entrance canopy facing the yard.
+	local canopy = newPart({
+		Name = "WingA_Canopy",
+		Size = Vector3.new(10, 0.8, 6),
+		Position = Vector3.new(-78, 9.5, -22.5),
+		Material = Enum.Material.Metal,
+		Color = COL_FASCIA,
+	})
+	canopy.Parent = root
+	local doorPair = newPart({
+		Name = "WingA_Doors",
+		Size = Vector3.new(6, 6, 0.5),
+		Position = Vector3.new(-78, 3.4, -25.1),
+		Material = Enum.Material.Glass,
+		Color = COL_GLASS,
+		CanCollide = false,
+	})
+	doorPair.Parent = root
+
+	-- Zone 2 — annex wing B with the white roof. Pushed north of the yard gap
+	-- so the MysteryBox machine pad (x 0, z -32.5) stays clear of its footprint.
+	addBuilding(root, {
+		Name = "WingB_Annex",
+		Center = Vector3.new(0, 8, -46),
+		Size = Vector3.new(40, 16, 16),
+		RoofColor = COL_ROOF_WHITE,
+		Windows = {
+			{ face = "Z", positions = { -16, -6, 6, 16 }, y = 7, size = Vector3.new(5, 4, 0), side = 1 },
+		},
+	})
+
+	-- Zone 3 — cafeteria (west). Windows on the yard-facing south side.
+	addBuilding(root, {
+		Name = "Cafeteria",
+		Center = Vector3.new(-82, 9, 26),
+		Size = Vector3.new(60, 18, 36),
+		RoofColor = COL_ROOF,
+		Windows = {
+			{ face = "Z", positions = { -104, -89, -74, -59 }, y = 7, size = Vector3.new(6, 4, 0), side = -1 },
+		},
+	})
+
+	-- Zone 3 — sports hall (east, tall dark building). West face carries the
+	-- rolling door plus two window bands clear of it.
+	addBuilding(root, {
+		Name = "SportsHall",
+		Center = Vector3.new(67.5, 12, 28),
+		Size = Vector3.new(55, 24, 40),
+		RoofColor = Color3.fromRGB(52, 56, 66),
+		Windows = {
+			{ face = "X", positions = { 12, 40 }, y = 10, size = Vector3.new(10, 6, 0), side = -1 },
+		},
+	})
+	-- Rolling door on the hall's west face.
+	local rollDoor = newPart({
+		Name = "SportsHall_Door",
+		Size = Vector3.new(0.6, 10, 12),
+		Position = Vector3.new(39.6, 5.4, 28),
+		Material = Enum.Material.CorrodedMetal,
+		Color = Color3.fromRGB(130, 134, 142),
+		CanCollide = false,
+	})
+	rollDoor.Parent = root
+
+	-- Zone 4 — north gym across the far side. Windows on the south face so the
+	-- band is visible when entering through the zone-3 door.
+	addBuilding(root, {
+		Name = "NorthGym",
+		Center = Vector3.new(-65, 13, 101),
+		Size = Vector3.new(80, 26, 42),
+		RoofColor = COL_ROOF,
+		Windows = {
+			{ face = "Z", positions = { -92, -72, -52, -34 }, y = 10, size = Vector3.new(8, 6, 0), side = -1 },
+		},
+	})
+end
+
+----------------------------------------------------------------------
+-- Football pitch: lines, centre circle, goals
+----------------------------------------------------------------------
+
+local function addPitchLine(root: Folder, center: Vector3, size: Vector3)
+	local line = newPart({
+		Name = "PitchLine",
+		Size = Vector3.new(size.X, 0.06, size.Z),
+		Position = center,
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_WHITE,
+		CanCollide = false,
+	})
+	line.Parent = root
+end
+
+local function addGoal(root: Folder, x: number, zCenter: number)
+	-- Goals sit on the ends of the pitch's long (east-west) axis, inset from
+	-- the z-line ends and one stud shy of the pitch edge so zone-4 zombies
+	-- spawning on the turf never materialise inside a post.
+	for _, dz in ipairs({ -5.5, 5.5 }) do
+		local post = newPart({
+			Name = "GoalPost",
+			Size = Vector3.new(0.4, 6, 0.4),
+			Position = Vector3.new(x, 3, zCenter + dz),
+			Material = Enum.Material.Metal,
+			Color = COL_WHITE,
+		})
+		post.Parent = root
+	end
+	local bar = newPart({
+		Name = "GoalCrossbar",
+		Size = Vector3.new(0.4, 0.4, 11.4),
+		Position = Vector3.new(x, 6, zCenter),
+		Material = Enum.Material.Metal,
+		Color = COL_WHITE,
+	})
+	bar.Parent = root
+end
+
+-- Centre circle from white ring segments (no huge overlapping discs).
+local function addPitchCircle(root: Folder, cx: number, cy: number, cz: number, radius: number, segments: number, sizeScale: number)
+	for i = 1, segments do
+		local angle = (i / segments) * math.pi * 2
+		local px = cx + math.cos(angle) * radius
+		local pz = cz + math.sin(angle) * radius
+		local seg = newPart({
+			Name = "CircleSeg",
+			Size = Vector3.new(sizeScale, 0.06, sizeScale * 0.45),
+			CFrame = CFrame.new(px, cy, pz) * CFrame.Angles(0, -angle, 0),
+			Material = Enum.Material.SmoothPlastic,
+			Color = COL_WHITE,
+			CanCollide = false,
+		})
+		seg.Parent = root
+	end
+end
+
+local function buildPitch(root: Folder)
+	local y = 0.44
+	addPitchLine(root, Vector3.new(70, y, 76.4), Vector3.new(94, 0, 0.7))
+	addPitchLine(root, Vector3.new(70, y, 123.6), Vector3.new(94, 0, 0.7))
+	addPitchLine(root, Vector3.new(23.4, y, 100), Vector3.new(0.7, 0, 47))
+	addPitchLine(root, Vector3.new(116.6, y, 100), Vector3.new(0.7, 0, 47))
+	addPitchLine(root, Vector3.new(70, y, 100), Vector3.new(0.7, 0, 47))
+	addPitchCircle(root, 70, y, 100, 6.5, 16, 2.2)
+	local dot = newPart({
+		Name = "PitchCenterDot",
+		Size = Vector3.new(1.4, 0.06, 1.4),
+		Position = Vector3.new(70, y, 100),
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_WHITE,
+		CanCollide = false,
+	})
+	dot.Parent = root
+
+	addGoal(root, 25, 100)
+	addGoal(root, 115, 100)
+end
+
+----------------------------------------------------------------------
+-- Basketball court west of the yard
+----------------------------------------------------------------------
+
+local function buildCourt(root: Folder)
+	local slab = newPart({
+		Name = "BasketCourt",
+		Size = Vector3.new(52, 0.3, 32),
+		Position = Vector3.new(-24, 0.35, 27),
+		Material = Enum.Material.Concrete,
+		Color = Color3.fromRGB(58, 62, 74),
+	})
+	slab.Parent = root
+
+	local y = 0.52
+	addPitchLine(root, Vector3.new(-24, y, 11.4), Vector3.new(52, 0, 0.7))
+	addPitchLine(root, Vector3.new(-24, y, 42.6), Vector3.new(52, 0, 0.7))
+	addPitchLine(root, Vector3.new(-49.6, y, 27), Vector3.new(0.7, 0, 31))
+	addPitchLine(root, Vector3.new(1.6, y, 27), Vector3.new(0.7, 0, 31))
+	addPitchLine(root, Vector3.new(-24, y, 27), Vector3.new(0.7, 0, 31))
+	addPitchCircle(root, -24, y, 27, 5, 14, 2)
+
+	-- Hoops at both ends.
+	for _, hx in ipairs({ -50, 2 }) do
+		local post = newPart({
+			Name = "HoopPost",
+			Size = Vector3.new(0.4, 7, 0.4),
+			Position = Vector3.new(hx, 3.6, 27),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL_DARK,
+		})
+		post.Parent = root
+		local board = newPart({
+			Name = "HoopBoard",
+			Size = Vector3.new(0.3, 3, 4.2),
+			Position = Vector3.new(hx + (if hx < -24 then -0.6 else 0.6), 6.4, 27),
+			Material = Enum.Material.SmoothPlastic,
+			Color = COL_WHITE,
+			CanCollide = false,
+		})
+		board.Parent = root
+		local ring = newPart({
+			Name = "HoopRing",
+			Size = Vector3.new(1.4, 0.14, 1.4),
+			Position = Vector3.new(hx + (if hx < -24 then -1.4 else 1.4), 5.2, 27),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(240, 110, 40),
+			Shape = Enum.PartType.Cylinder,
+			CanCollide = false,
+		})
+		ring.Parent = root
+	end
+end
+
+----------------------------------------------------------------------
+-- Parking: stalls, cars (two rows), one stray puddle-avoider
+----------------------------------------------------------------------
+
+local function buildParking(root: Folder, rand: Random)
+	-- Stall divider lines, two rows.
+	for _, rowZ in ipairs({ -93, -110 }) do
+		for i = 0, 7 do
+			local x = -34 + i * 12
+			local line = newPart({
+				Name = "StallLine",
+				Size = Vector3.new(0.3, 0.05, 6),
+				Position = Vector3.new(x, 0.45, rowZ),
+				Material = Enum.Material.SmoothPlastic,
+				Color = COL_WHITE,
+				CanCollide = false,
+			})
+			line.Parent = root
+		end
+	end
+
+	-- Cars: parked between stall lines. Two cars sit where the spawn pad is,
+	-- so those stalls are left empty deliberately.
+	local palette = {
+		Color3.fromRGB(226, 228, 232),
+		Color3.fromRGB(40, 44, 52),
+		Color3.fromRGB(150, 40, 44),
+		Color3.fromRGB(50, 84, 140),
+		Color3.fromRGB(196, 160, 60),
+	}
+	local carCells = {
+		{ -22, -92 }, { 26, -92 }, { 50, -92 },
+		{ -34, -109 }, { 26, -109 }, { 50, -109 },
+	}
+	for _, cell in ipairs(carCells) do
+		local color = palette[rand:Int(1, #palette)]
+		local body = newPart({
+			Name = "Car",
+			Size = Vector3.new(4.2, 2.6, 8.6),
+			Position = Vector3.new(cell[1], 1.7, cell[2]),
+			Material = Enum.Material.SmoothPlastic,
+			Color = color,
+		})
+		body.Parent = root
+		local cabin = newPart({
+			Name = "CarCabin",
+			Size = Vector3.new(3.6, 1.5, 4.2),
+			Position = Vector3.new(cell[1], 3.7, cell[2] + 0.4),
+			Material = Enum.Material.Glass,
+			Color = Color3.fromRGB(28, 38, 48),
+		})
+		cabin.Parent = root
+	end
+end
+
+----------------------------------------------------------------------
+-- Playground (zone 2, east of the annex wing)
+----------------------------------------------------------------------
+
+local function buildPlayground(root: Folder, rand: Random)
+	local cx, cz = 62, -20
+
+	-- Sandbox with timber border.
+	local sand = newPart({
+		Name = "Sandpit",
+		Size = Vector3.new(16, 0.25, 12),
+		Position = Vector3.new(cx, 0.5, cz),
+		Material = Enum.Material.Sand,
+		Color = COL_SAND,
+	})
+	sand.Parent = root
+	for _, off in ipairs({
+		Vector3.new(0, 0.6, -6), Vector3.new(0, 0.6, 6),
+		Vector3.new(-8, 0.6, 0), Vector3.new(8, 0.6, 0),
+	}) do
+		local rail = newPart({
+			Name = "SandpitRail",
+			Size = Vector3.new(if off.X ~= 0 then 0.5 else 16.8, 0.7, if off.Z ~= 0 then 0.5 else 12.8),
+			Position = Vector3.new(cx + off.X, 0.75, cz + off.Z),
+			Material = Enum.Material.WoodPlanks,
+			Color = COL_WOOD,
+		})
+		rail.Parent = root
+	end
+
+	-- Climbing frame: four posts and two top beams.
+	for _, off in ipairs({
+		Vector3.new(-6, 0, -3), Vector3.new(6, 0, -3),
+		Vector3.new(-6, 0, 3), Vector3.new(6, 0, 3),
+	}) do
+		local post = newPart({
+			Name = "ClimbPost",
+			Size = Vector3.new(0.6, 8, 0.6),
+			Position = Vector3.new(cx + off.X, 4.4, cz + off.Z),
+			Material = Enum.Material.Metal,
+			Color = Color3.fromRGB(196, 90, 60),
+		})
+		post.Parent = root
+	end
+	for _, dz in ipairs({ -3, 3 }) do
+		local beam = newPart({
+			Name = "ClimbBeam",
+			Size = Vector3.new(12, 0.5, 0.5),
+			Position = Vector3.new(cx, 8.4, cz + dz),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL,
+		})
+		beam.Parent = root
+	end
+
+	-- Slide: platform with a wedge run-out.
+	local platform = newPart({
+		Name = "SlidePlatform",
+		Size = Vector3.new(4, 0.5, 4),
+		Position = Vector3.new(cx - 10, 3.2, cz + 6),
+		Material = Enum.Material.Metal,
+		Color = Color3.fromRGB(70, 130, 180),
+	})
+	platform.Parent = root
+	for _, off in ipairs({ Vector3.new(-1.6, -1.6, 0), Vector3.new(1.6, -1.6, 0), Vector3.new(0, -1.6, -1.6), Vector3.new(0, -1.6, 1.6) }) do
+		local leg = newPart({
+			Name = "SlideLeg",
+			Size = Vector3.new(0.4, 3.2, 0.4),
+			Position = Vector3.new(cx - 10 + off.X, 1.4, cz + 6 + off.Z),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL,
+		})
+		leg.Parent = root
+	end
+	local slide = newPart({
+		Name = "SlideRun",
+		Shape = Enum.PartType.Wedge,
+		Size = Vector3.new(3.2, 3, 7),
+		CFrame = CFrame.new(cx - 10, 1.9, cz + 10.5) * CFrame.Angles(0, math.pi, 0),
+		Material = Enum.Material.SmoothPlastic,
+		Color = Color3.fromRGB(220, 170, 40),
+	})
+	slide.Parent = root
+
+	-- Seesaw.
+	local pivot = newPart({
+		Name = "SeesawPost",
+		Size = Vector3.new(0.8, 1.4, 0.8),
+		Position = Vector3.new(cx + 10, 1.1, cz + 6),
+		Material = Enum.Material.Metal,
+		Color = COL_METAL,
+	})
+	pivot.Parent = root
+	local plank = newPart({
+		Name = "SeesawPlank",
+		Size = Vector3.new(1.4, 0.4, 10),
+		CFrame = CFrame.new(cx + 10, 2.1, cz + 6) * CFrame.Angles(0, 0, rand:Range(-0.15, 0.15)),
+		Material = Enum.Material.WoodPlanks,
+		Color = Color3.fromRGB(60, 140, 100),
+	})
+	plank.Parent = root
+end
+
+----------------------------------------------------------------------
+-- Yard props: benches, planters, bike racks, tables, bins, propane tanks
+----------------------------------------------------------------------
+
+local function addBench(root: Folder, x: number, z: number, groundY: number, yawDeg: number)
+	local yaw = CFrame.Angles(0, math.rad(yawDeg), 0)
+	local base = CFrame.new(x, groundY, z) * yaw
+	for _, off in ipairs({ Vector3.new(-1.8, 0.95, 0), Vector3.new(1.8, 0.95, 0) }) do
+		local leg = newPart({
+			Name = "BenchLeg",
+			Size = Vector3.new(0.4, 1.1, 1.4),
+			CFrame = base * CFrame.new(off),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL,
+		})
+		leg.Parent = root
+	end
+	local seat = newPart({
+		Name = "BenchSeat",
+		Size = Vector3.new(5, 0.4, 1.8),
+		CFrame = base * CFrame.new(0, 1.65, 0),
+		Material = Enum.Material.WoodPlanks,
+		Color = COL_WOOD,
+	})
+	seat.Parent = root
+	local back = newPart({
+		Name = "BenchBack",
+		Size = Vector3.new(5, 1.3, 0.35),
+		CFrame = base * CFrame.new(0, 2.6, -0.95),
+		Material = Enum.Material.WoodPlanks,
+		Color = COL_WOOD,
+		CanCollide = false,
+	})
+	back.Parent = root
+end
+
+local function addPlanter(root: Folder, x: number, z: number, groundY: number)
+	local box = newPart({
+		Name = "Planter",
+		Size = Vector3.new(4.5, 1.8, 4.5),
+		Position = Vector3.new(x, groundY + 0.9, z),
+		Material = Enum.Material.Concrete,
+		Color = Color3.fromRGB(118, 118, 124),
+	})
+	box.Parent = root
+	local bush = newPart({
+		Name = "PlanterBush",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(3.4, 3.4, 3.4),
+		Position = Vector3.new(x, groundY + 3.1, z),
+		Material = Enum.Material.Grass,
+		Color = Color3.fromRGB(58, 104, 52),
+		CanCollide = false,
+	})
+	bush.Parent = root
+end
+
+local function addBikeRack(root: Folder)
+	-- Row of hoops under the Wing A entrance canopy — the school's bike
+	-- shelter. Clear of the bench rows and the door glass.
+	local ry = 0.4
+	local rack = newPart({
+		Name = "BikeRackBase",
+		Size = Vector3.new(12, 0.2, 0.5),
+		Position = Vector3.new(-78, ry + 0.1, -23),
+		Material = Enum.Material.Metal,
+		Color = COL_METAL,
+	})
+	rack.Parent = root
+	for i = 0, 3 do
+		local bar = newPart({
+			Name = "BikeHoop",
+			Size = Vector3.new(0.25, 2.4, 0.25),
+			Position = Vector3.new(-83 + i * 3.4, ry + 1.3, -23),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL,
+		})
+		bar.Parent = root
+	end
+	-- A few abandoned bikes (bodies only, stylised).
+	for _, bike in ipairs({ { -81, -23.8 }, { -78, -23.8 }, { -75, -23.8 } }) do
+		local body = newPart({
+			Name = "Bike",
+			Size = Vector3.new(1.1, 1.2, 2.2),
+			Position = Vector3.new(bike[1], 1.3, bike[2]),
+			Material = Enum.Material.Metal,
+			Color = Color3.fromRGB(180, 60, 50),
+		})
+		body.Parent = root
+	end
+end
+
+local function addPicnicTable(root: Folder, x: number, z: number)
+	local top = newPart({
+		Name = "TableTop",
+		Size = Vector3.new(2.6, 0.3, 7),
+		Position = Vector3.new(x, 1.9, z),
+		Material = Enum.Material.WoodPlanks,
+		Color = COL_WOOD,
+	})
+	top.Parent = root
+	for _, dz in ipairs({ -1.6, 1.6 }) do
+		local benchPart = newPart({
+			Name = "TableBench",
+			Size = Vector3.new(0.7, 0.25, 7),
+			Position = Vector3.new(x + dz, 1.5, z),
+			Material = Enum.Material.WoodPlanks,
+			Color = COL_WOOD,
+		})
+		benchPart.Parent = root
+	end
+	for _, off in ipairs({ Vector3.new(-0.9, 0, -2.6), Vector3.new(0.9, 0, -2.6), Vector3.new(-0.9, 0, 2.6), Vector3.new(0.9, 0, 2.6) }) do
+		local leg = newPart({
+			Name = "TableLeg",
+			Size = Vector3.new(0.25, 1.8, 0.25),
+			Position = Vector3.new(x + off.X, 0.9, z + off.Z),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL,
+		})
+		leg.Parent = root
+	end
+end
+
+-- Propane/heat tanks: keep the explosive-barrel gameplay, reskinned for a
+-- school's service yard.
+local function addPropaneTank(root: Folder, x: number, z: number, groundY: number)
+	local tank = newPart({
+		Name = "PropaneTank",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(4.4, 3, 3),
+		Position = Vector3.new(x, groundY + 2.2, z),
+		Material = Enum.Material.Metal,
+		Color = Color3.fromRGB(178, 62, 48),
+	})
+	tank:SetAttribute("Explosive", true)
+	tank:SetAttribute("ExplosionRadius", 14)
+	tank:SetAttribute("ExplosionDamage", 90)
+	tank.Parent = root
+end
+
+local function addDumpster(root: Folder, x: number, z: number)
+	local bin = newPart({
+		Name = "Dumpster",
+		Size = Vector3.new(6, 4, 3.4),
+		Position = Vector3.new(x, 2.4, z),
+		Material = Enum.Material.Metal,
+		Color = Color3.fromRGB(40, 96, 62),
+	})
+	bin.Parent = root
+end
+
+local function buildYardProps(root: Folder)
+	-- Benches along the classroom wing's south face. The x = -78 slot is the
+	-- entrance door + canopy, so benches flank it instead of sitting in it.
+	for _, bx in ipairs({ -100, -89, -67, -56 }) do
+		addBench(root, bx, -22, 0.4, 180)
+	end
+	-- Benches outside the cafeteria's north face.
+	for _, bx in ipairs({ -98, -84, -70 }) do
+		addBench(root, bx, 4, 0, 0)
+	end
+	-- Two benches facing the pitch sideline.
+	addBench(root, 16, 88, 0, 90)
+	addBench(root, 16, 112, 0, 90)
+
+	-- Planters green the yard and mark paths.
+	for _, p in ipairs({
+		{ 6, 8 }, { 18, 2 }, { 14, 46 }, { -10, 52 },
+		{ 52, -60 }, { 52, 60 }, { -30, -80 }, { 34, -80 },
+	}) do
+		addPlanter(root, p[1], p[2], if p[2] >= -70 and p[2] <= 52 then 0.4 else 0)
+	end
+
+	addBikeRack(root)
+
+	-- Picnic tables west of the cafeteria.
+	for _, tz in ipairs({ 14, 26, 38 }) do
+		addPicnicTable(root, -44, tz)
+	end
+
+	-- Waste bins beside the north gym.
+	addDumpster(root, -18, 94)
+	addDumpster(root, -18, 110)
+
+	-- Propane tanks clustered at service points.
+	for _, t in ipairs({
+		{ -110, 1, 0 }, { -100, 1, 0 }, { -90, 1, 0 },
+		{ -36, -118, 0.4 }, { -36, -104, 0.4 },
+		{ 48, 52, 0.4 }, { 60, 52, 0.4 }, { 72, 52, 0.4 },
+		{ -90, -60, 0 }, { -100, -60, 0 },
+		{ -66, 74, 0 }, { -40, 74, 0 },
+		{ 26, -42, 0.4 }, { 26, -46, 0.4 },
+	}) do
+		addPropaneTank(root, t[1], t[2], t[3])
+	end
+end
+
+----------------------------------------------------------------------
+-- Signs and the flagpole: the school's own identity
+----------------------------------------------------------------------
+
+local function buildSignage(root: Folder)
+	-- School sign near the arrival area.
+	local post = newPart({
+		Name = "SignPost",
+		Size = Vector3.new(0.8, 7, 0.8),
+		Position = Vector3.new(-26, 4, -88),
+		Material = Enum.Material.Metal,
+		Color = COL_METAL_DARK,
+	})
+	post.Parent = root
+	local panel = newPart({
+		Name = "SignPanel",
+		Size = Vector3.new(14, 4.5, 0.6),
+		Position = Vector3.new(-26, 9, -88),
+		Material = Enum.Material.Metal,
+		Color = Color3.fromRGB(24, 60, 44),
+	})
+	panel.Parent = root
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "SignText"
+	gui.Size = UDim2.new(0, 340, 0, 110)
+	gui.StudsOffset = Vector3.new(0, 0, 0)
+	gui.MaxDistance = 160
+	gui.Adornee = panel
+	gui.Parent = panel
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = COL_WHITE
+	label.TextStrokeTransparency = 0.35
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	local schoolName = "Lovisedalsskolan"
+	pcall(function()
+		schoolName = tostring(Config.Map.SchoolName or "Lovisedalsskolan")
+	end)
+	label.Text = schoolName
+	label.Parent = gui
+
+	-- Swedish flag on a pole by the yard entrance.
+	local pole = newPart({
+		Name = "Flagpole",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(18, 0.6, 0.6),
+		CFrame = CFrame.new(0, 9, -80) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Metal,
+		Color = COL_METAL_DARK,
+	})
+	pole.Parent = root
+	local flagY = 15.4
+	local flag = newPart({
+		Name = "FlagBlue",
+		Size = Vector3.new(0.25, 2, 4),
+		Position = Vector3.new(0, flagY, -80 + 0), -- grows along Z from the pole
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_FLAG_BLUE,
+		CanCollide = false,
+	})
+	-- Position the flag field so it hangs east of the pole.
+	flag.Position = Vector3.new(0, flagY, -78)
+	flag.Parent = root
+	local stripeV = newPart({
+		Name = "FlagCrossV",
+		Size = Vector3.new(0.3, 2, 0.9),
+		Position = Vector3.new(0, flagY, -78 + 0.9),
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_FLAG_YELLOW,
+		CanCollide = false,
+	})
+	stripeV.Parent = root
+	local stripeH = newPart({
+		Name = "FlagCrossH",
+		Size = Vector3.new(0.3, 0.7, 4),
+		Position = Vector3.new(0, flagY + 0.55, -78),
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_FLAG_YELLOW,
+		CanCollide = false,
+	})
+	stripeH.Parent = root
+end
+
+----------------------------------------------------------------------
+-- Pine forest ring (outside the fence)
+----------------------------------------------------------------------
+
+local function addPine(root: Folder, x: number, z: number, rand: Random)
+	local height = rand:Range(9, 14)
+	local trunk = newPart({
+		Name = "PineTrunk",
+		Size = Vector3.new(1.4, height, 1.4),
+		Position = Vector3.new(x, height / 2, z),
+		Material = Enum.Material.Wood,
+		Color = COL_TRUNK,
+	})
+	trunk.Parent = root
+	local tiers = {
+		{ w = 7, h = 4, y = height + 1 },
+		{ w = 5, h = 3.5, y = height + 3 },
+		{ w = 3, h = 3, y = height + 5 },
+	}
+	for _, tier in ipairs(tiers) do
+		local rot = CFrame.Angles(0, math.rad(45), 0)
+		local foliage = newPart({
+			Name = "PineCrow",
+			Size = Vector3.new(tier.w, tier.h, tier.w),
+			CFrame = CFrame.new(x, tier.y, z) * rot,
+			Material = Enum.Material.Grass,
+			Color = COL_PINE,
+			CanCollide = false,
+		})
+		foliage.Parent = root
+	end
+end
+
+local function buildForest(root: Folder, rand: Random)
+	-- A ring of pines outside the fence, with jitter for an organic treeline.
+	local step = 22
+	local jitterPos = 6
+	for side = 1, 4 do
+		for i = -6, 6 do
+			local t: number = i * step
+			local jit: number = rand:Range(-jitterPos, jitterPos)
+			local x: number, z: number
+			if side == 1 then
+				x, z = t + jit, 150
+			elseif side == 2 then
+				x, z = t + jit, -150
+			elseif side == 3 then
+				x, z = 150, t + jit
+			else
+				x, z = -150, t + jit
+			end
+			addPine(root, x, z, rand)
+		end
+	end
+	-- Corner fills so the ring looks continuous.
+	for _, c in ipairs({ { 140, 140 }, { -140, 140 }, { 140, -140 }, { -140, -140 } }) do
+		addPine(root, c[1], c[2], rand)
+	end
+end
+
+----------------------------------------------------------------------
+-- Boundary: invisible walls, low black fence, stray-proofing
+----------------------------------------------------------------------
+
+local function buildBoundary(root: Folder, m: MapSettings)
 	local size: number = m.ArenaSize
 	local h: number = m.WallHeight
 	local t: number = m.WallThickness
 	local half: number = size / 2
 
+	-- Invisible colliders: keep players and zombies inside without visually
+	-- walling off the forest.
 	local specs = {
-		{ "Wall_North", Vector3.new(size, h, t), Vector3.new(0, h / 2, -half - t / 2) },
-		{ "Wall_South", Vector3.new(size, h, t), Vector3.new(0, h / 2, half + t / 2) },
-		{ "Wall_East", Vector3.new(t, h, size), Vector3.new(half + t / 2, h / 2, 0) },
-		{ "Wall_West", Vector3.new(t, h, size), Vector3.new(-half - t / 2, h / 2, 0) },
+		{ "Boundary_North", Vector3.new(size, h, t), Vector3.new(0, h / 2, -half - t / 2) },
+		{ "Boundary_South", Vector3.new(size, h, t), Vector3.new(0, h / 2, half + t / 2) },
+		{ "Boundary_East", Vector3.new(t, h, size), Vector3.new(half + t / 2, h / 2, 0) },
+		{ "Boundary_West", Vector3.new(t, h, size), Vector3.new(-half - t / 2, h / 2, 0) },
 	}
-
 	for _, s in ipairs(specs) do
 		local w = newPart({
 			Name = s[1],
 			Size = s[2],
 			Position = s[3],
-			Material = m.WallMaterial,
-			Color = Color3.fromRGB(96, 84, 74),
+			Transparency = 1,
+			CanCollide = true,
 		})
 		w.Parent = root
+	end
+
+	-- Low chain-link-style fence just inside the boundary, like the photo's
+	-- black yard fence.
+	local fenceHalf = half - 1
+	local fenceSpecs = {
+		{ Vector3.new(size - 2, 4.2, 0.3), Vector3.new(0, 2.6, -fenceHalf) },
+		{ Vector3.new(size - 2, 4.2, 0.3), Vector3.new(0, 2.6, fenceHalf) },
+		{ Vector3.new(0.3, 4.2, size - 2), Vector3.new(fenceHalf, 2.6, 0) },
+		{ Vector3.new(0.3, 4.2, size - 2), Vector3.new(-fenceHalf, 2.6, 0) },
+	}
+	for i, fs in ipairs(fenceSpecs) do
+		local slat = newPart({
+			Name = "FenceSlat_" .. tostring(i),
+			Size = fs[1],
+			Position = fs[2],
+			Material = Enum.Material.DiamondPlate,
+			Color = COL_FENCE,
+			Transparency = 0.25,
+			CanCollide = false,
+		})
+		slat.Parent = root
+	end
+	for i = 0, 10 do
+		local along = -half + 2 + i * ((size - 4) / 10)
+		for _, side in ipairs({ -1, 1 }) do
+			local postA = newPart({
+				Name = "FencePost",
+				Size = Vector3.new(0.5, 4.6, 0.5),
+				Position = Vector3.new(along, 2.3, side * fenceHalf),
+				Material = Enum.Material.Metal,
+				Color = COL_FENCE,
+				CanCollide = false,
+			})
+			postA.Parent = root
+			local postB = newPart({
+				Name = "FencePost",
+				Size = Vector3.new(0.5, 4.6, 0.5),
+				Position = Vector3.new(side * fenceHalf, 2.3, along),
+				Material = Enum.Material.Metal,
+				Color = COL_FENCE,
+				CanCollide = false,
+			})
+			postB.Parent = root
+		end
 	end
 
 	-- Prevent players escaping over the top during knockback.
@@ -3202,66 +4222,118 @@ local function buildWalls(root: Folder, m: MapSettings)
 	lid.Parent = root
 end
 
--- Scatters cover crates inside the arena, avoiding the exact centre spawn pad.
-local function buildCover(root: Folder, m: MapSettings, rand: Random)
-	local half: number = m.ArenaSize / 2 - m.WallThickness - 6
-	local coverFolder = Instance.new("Folder")
-	coverFolder.Name = "Cover"
-	coverFolder.Parent = root
+----------------------------------------------------------------------
+-- Zone walls as brick wings + buyable doors
+----------------------------------------------------------------------
 
-	for i = 1, m.CoverCount do
-		local w = rand:Range(m.CoverMinSize, m.CoverMaxSize)
-		local d = rand:Range(m.CoverMinSize, m.CoverMaxSize)
-		local h = rand:Range(4, 12)
-
-		local x = rand:Range(-half, half)
-		local z = rand:Range(-half, half)
-
-		-- Keep the central player spawn clear
-		local distSq: number = x * x + z * z
-		if math.sqrt(distSq) < 18 then
-			x += if x >= 0 then 22 else -22
-			z += if z >= 0 then 22 else -22
-		end
-
-		local c = newPart({
-			Name = "Cover_" .. i,
-			Size = Vector3.new(w, h, d),
-			Position = Vector3.new(x, h / 2, z),
-			Material = rand:Int(1, 2) == 1 and Enum.Material.Brick or Enum.Material.CorrodedMetal,
-			Color = Color3.fromRGB(rand:Int(80, 120), rand:Int(75, 110), rand:Int(70, 100)),
-		})
-		c.Parent = coverFolder
+-- Splits the arena into zones separated by building wings, each pierced by a
+-- buyable door. Zone 1 is open; later zones cost progressively more.
+local function buildZonesAndDoors(root: Folder, m: MapSettings)
+	local count: number = m.ZoneCount
+	if count < 2 then
+		return
 	end
-end
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
 
--- Explosive barrels: a light hazard that rewards careful shooting.
-local function buildBarrels(root: Folder, m: MapSettings, rand: Random)
-	local half: number = m.ArenaSize / 2 - 20
-	local f = Instance.new("Folder")
-	f.Name = "Barrels"
-	f.Parent = root
+	local zones = Instance.new("Folder")
+	zones.Name = "Zones"
+	zones.Parent = root
 
-	for i = 1, m.BarrelCount do
-		local x = rand:Range(-half, half)
-		local z = rand:Range(-half, half)
-		local distSq: number = x * x + z * z
-		if math.sqrt(distSq) < 20 then
-			x += 26
+	local doors = Instance.new("Folder")
+	doors.Name = "Doors"
+	doors.Parent = root
+
+	for i = 1, count do
+		local zCenter: number = -half + width * (i - 1) + width / 2
+		local marker = newPart({
+			Name = "Zone_" .. i,
+			Size = Vector3.new(4, 2, 4),
+			Position = Vector3.new(0, 1.5, zCenter),
+			Transparency = 1,
+			CanCollide = false,
+		})
+		marker:SetAttribute("ZoneIndex", i)
+		marker.Parent = zones
+	end
+
+	for boundary = 1, count - 1 do
+		local zPos: number = -half + width * boundary
+		local doorWidth: number = 24
+		local sideWidth: number = (m.ArenaSize - doorWidth) / 2
+
+		-- Boundary wings: brick face + dark roof, reading as school buildings.
+		for _, side in ipairs({ -1, 1 }) do
+			local cx: number = side * (doorWidth / 2 + sideWidth / 2)
+			local wall = newPart({
+				Name = string.format("BoundaryWing_%d_%d", boundary, side),
+				Size = Vector3.new(sideWidth, WING_WALL_HEIGHT, m.DoorThickness),
+				Position = Vector3.new(cx, WING_WALL_HEIGHT / 2, zPos),
+				Material = Enum.Material.Brick,
+				Color = COL_BRICK,
+			})
+			wall.Parent = root
+			local roof = newPart({
+				Name = string.format("BoundaryWingRoof_%d_%d", boundary, side),
+				Size = Vector3.new(sideWidth + 6, WING_ROOF_HEIGHT, m.DoorThickness + 6),
+				Position = Vector3.new(cx, WING_WALL_HEIGHT + WING_ROOF_HEIGHT / 2, zPos),
+				Material = Enum.Material.Slate,
+				Color = COL_ROOF,
+			})
+			roof.Parent = root
 		end
 
-		local b = newPart({
-			Name = "Barrel_" .. i,
-			Shape = Enum.PartType.Cylinder,
-			Size = Vector3.new(4, 7, 4),
-			Position = Vector3.new(x, 3.5, z),
+		-- The buyable door itself.
+		--
+		-- The FIRST boundary is deliberately left OPEN. Players begin in zone 1
+		-- with few coins, so a paywalled first exit means they literally cannot
+		-- leave the arrival lot until they have killed enough to afford it —
+		-- and if spawns are filtered to reachable zones they may never get the
+		-- chance. Every later door charges the escalating price as intended.
+		local isExit: boolean = (boundary == 1)
+		local cost: number = if isExit then 0 else math.floor(m.DoorCost * (m.DoorCostGrowth ^ (boundary - 2)) + 0.5)
+		local door = newPart({
+			Name = string.format("Door_%d", boundary),
+			Size = Vector3.new(doorWidth, DOOR_HEIGHT, m.DoorThickness),
+			Position = Vector3.new(0, DOOR_HEIGHT / 2, zPos),
 			Material = Enum.Material.Metal,
-			Color = Color3.fromRGB(150, 90, 40),
+			Color = Color3.fromRGB(120, 80, 50),
+			Transparency = 0.15,
+			CanCollide = not isExit,
 		})
-		b:SetAttribute("Explosive", true)
-		b:SetAttribute("ExplosionRadius", 14)
-		b:SetAttribute("ExplosionDamage", 90)
-		b.Parent = f
+		door:SetAttribute("IsDoor", true)
+		door:SetAttribute("DoorIndex", boundary)
+		door:SetAttribute("Cost", cost)
+		door:SetAttribute("Open", isExit)
+		door:SetAttribute("LeadsToZone", boundary + 1)
+		door.Parent = doors
+
+		if isExit then
+			-- Sink the open exit out of the way so it reads as a passage.
+			local d: any = door
+			d.Position = Vector3.new(0, -20, zPos)
+		else
+			-- Prompt label so players know the price.
+			local gui = Instance.new("BillboardGui")
+			gui.Name = "PriceLabel"
+			gui.Size = UDim2.new(0, 160, 0, 44)
+			gui.StudsOffset = Vector3.new(0, 4, 0)
+			gui.AlwaysOnTop = false
+			gui.MaxDistance = 60
+			gui.Adornee = door
+			gui.Parent = door
+
+			local label = Instance.new("TextLabel")
+			label.Name = "Text"
+			label.Size = UDim2.new(1, 0, 1, 0)
+			label.BackgroundTransparency = 1
+			label.TextColor3 = Color3.fromRGB(255, 215, 120)
+			label.TextStrokeTransparency = 0.4
+			label.TextScaled = true
+			label.Font = Enum.Font.GothamBold
+			label.Text = string.format("Open — %d coins", cost)
+			label.Parent = gui
+		end
 	end
 end
 
@@ -3313,157 +4385,66 @@ local function buildSpawnPoints(root: Folder, m: MapSettings)
 	end
 end
 
--- Low-lying fog banks + wall lamps to make the arena feel alive and lit.
-local function buildAmbience(root: Folder, m: MapSettings, rand: Random)
-	local half: number = m.ArenaSize / 2 - 12
+----------------------------------------------------------------------
+-- Floodlights and mist
+----------------------------------------------------------------------
+
+local function buildLightFittings(root: Folder, rand: Random)
 	local f = Instance.new("Folder")
 	f.Name = "Ambience"
 	f.Parent = root
 
-	for i = 1, 8 do
-		local angle = (i / 8) * math.pi * 2
-		local x = math.cos(angle) * (half - 4)
-		local z = math.sin(angle) * (half - 4)
-
-		local lamp = newPart({
-			Name = "Lamp_" .. i,
-			Size = Vector3.new(1.5, 1.5, 1.5),
-			Position = Vector3.new(x, 12, z),
-			Material = Enum.Material.Neon,
-			Color = Color3.fromRGB(255, 170, 90),
-			Transparency = 0.15,
+	-- Floodlight poles at the pitch corners and around the yard.
+	local poles: { { number } } = {
+		{ 28, 82 }, { 112, 82 }, { 28, 118 }, { 112, 118 },
+		{ -110, -62 }, { 66, -62 }, { -110, 58 }, { 66, 58 },
+	}
+	for i, pole in ipairs(poles) do
+		local groundY: number = 0
+		if pole[2] >= -70 and pole[2] <= 52 then
+			groundY = 0.4
+		end
+		local shaft = newPart({
+			Name = "Floodlight_" .. tostring(i),
+			Size = Vector3.new(0.8, 15, 0.8),
+			Position = Vector3.new(pole[1], groundY + 7.5, pole[2]),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL_DARK,
 		})
-		lamp.Parent = f
-
+		shaft.Parent = f
+		local head = newPart({
+			Name = "FloodlightHead_" .. tostring(i),
+			Size = Vector3.new(3, 1.1, 1.4),
+			Position = Vector3.new(pole[1], groundY + 15.4, pole[2]),
+			Material = Enum.Material.Neon,
+			Color = Color3.fromRGB(255, 244, 214),
+			CanCollide = false,
+		})
+		head.Parent = f
 		local light = Instance.new("PointLight")
 		light.Name = "ZA_LampLight"
 		light.Range = 70
-		light.Brightness = 1.6
-		light.Color = Color3.fromRGB(255, 175, 100)
+		light.Brightness = 1.5
+		light.Color = Color3.fromRGB(255, 190, 120)
 		light.Shadows = true
-		light.Parent = lamp
+		light.Parent = head
 	end
 
+	-- Low mist banks drifting over yard and field edges at night.
 	for i = 1, 10 do
-		local px = rand:Range(-half, half)
-		local pz = rand:Range(-half, half)
-		local size = rand:Range(20, 45)
+		local px = rand:Range(-100, 100)
+		local pz = rand:Range(-100, 100)
 		local patch = newPart({
-			Name = "Fog_" .. i,
-			Size = Vector3.new(size, 0.4, size),
-			Position = Vector3.new(px, 0.5, pz),
+			Name = "Fog_" .. tostring(i),
+			Size = Vector3.new(rand:Range(20, 45), 0.4, rand:Range(20, 45)),
+			Position = Vector3.new(px, 0.6, pz),
 			Material = Enum.Material.SmoothPlastic,
 			Color = Color3.fromRGB(80, 86, 104),
 			Transparency = 0.72,
+			CanCollide = false,
 		})
 		patch.Parent = f
 	end
-end
-
--- Splits the arena into zones separated by interior walls, each pierced by a
--- buyable door. Zone 1 is open; later zones cost progressively more.
-local function buildZonesAndDoors(root: Folder, m: MapSettings)
-	local count: number = m.ZoneCount
-	if count < 2 then
-		return
-	end
-	local half: number = m.ArenaSize / 2
-	local width: number = m.ZoneWidth
-
-	local zones = Instance.new("Folder")
-	zones.Name = "Zones"
-	zones.Parent = root
-
-	local doors = Instance.new("Folder")
-	doors.Name = "Doors"
-	doors.Parent = root
-
-	for i = 1, count do
-		local zCenter: number = -half + width * (i - 1) + width / 2
-		local marker = newPart({
-			Name = "Zone_" .. i,
-			Size = Vector3.new(4, 2, 4),
-			Position = Vector3.new(0, 1.5, zCenter),
-			Transparency = 1,
-			CanCollide = false,
-		})
-		marker:SetAttribute("ZoneIndex", i)
-		marker.Parent = zones
-	end
-
-	-- Interior walls between zones, with a door gap in the middle.
-	for boundary = 1, count - 1 do
-		local zPos: number = -half + width * boundary
-		local doorWidth: number = 24
-		local sideWidth: number = (m.ArenaSize - doorWidth) / 2
-
-		for _, side in ipairs({ -1, 1 }) do
-			local cx: number = side * (doorWidth / 2 + sideWidth / 2)
-			local wall = newPart({
-				Name = string.format("Boundary_%d_%d", boundary, side),
-				Size = Vector3.new(sideWidth, m.WallHeight, m.DoorThickness),
-				Position = Vector3.new(cx, m.WallHeight / 2, zPos),
-				Material = m.WallMaterial,
-				Color = Color3.fromRGB(88, 76, 68),
-			})
-			wall.Parent = root
-		end
-
-		-- The buyable door itself.
-		local cost: number = math.floor(m.DoorCost * (m.DoorCostGrowth ^ (boundary - 1)) + 0.5)
-		local door = newPart({
-			Name = string.format("Door_%d", boundary),
-			Size = Vector3.new(doorWidth, m.WallHeight, m.DoorThickness),
-			Position = Vector3.new(0, m.WallHeight / 2, zPos),
-			Material = Enum.Material.Metal,
-			Color = Color3.fromRGB(120, 80, 50),
-			Transparency = 0.15,
-			CanCollide = true,
-		})
-		door:SetAttribute("IsDoor", true)
-		door:SetAttribute("DoorIndex", boundary)
-		door:SetAttribute("Cost", cost)
-		door:SetAttribute("Open", false)
-		door:SetAttribute("LeadsToZone", boundary + 1)
-		door.Parent = doors
-
-		-- Prompt label so players know the price.
-		local gui = Instance.new("BillboardGui")
-		gui.Name = "PriceLabel"
-		gui.Size = UDim2.new(0, 160, 0, 44)
-		gui.StudsOffset = Vector3.new(0, 4, 0)
-		gui.AlwaysOnTop = false
-		gui.MaxDistance = 60
-		gui.Adornee = door
-		gui.Parent = door
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Text"
-		label.Size = UDim2.new(1, 0, 1, 0)
-		label.BackgroundTransparency = 1
-		label.TextColor3 = Color3.fromRGB(255, 215, 120)
-		label.TextStrokeTransparency = 0.4
-		label.TextScaled = true
-		label.Font = Enum.Font.GothamBold
-		label.Text = string.format("Open — %d coins", cost)
-		label.Parent = gui
-	end
-end
-
-local function buildPlayerSpawn(_m: MapSettings)
-	local ws: Workspace = game:GetService("Workspace")
-	local old = ws:FindFirstChild("PlayerSpawnPad")
-	if old then
-		old:Destroy()
-	end
-	local pad = newPart({
-		Name = "PlayerSpawnPad",
-		Size = Vector3.new(30, 2, 30),
-		Position = Vector3.new(0, 1, 0),
-		Material = Enum.Material.SmoothPlastic,
-		Color = Color3.fromRGB(80, 110, 90),
-	})
-	pad.Parent = ws
 end
 
 -- Night-time horror mood, fully scripted (no asset dependencies).
@@ -3515,19 +4496,81 @@ local function buildLighting()
 	end)
 end
 
+----------------------------------------------------------------------
+-- Player spawn
+----------------------------------------------------------------------
+
+local function buildPlayerSpawn(m: MapSettings)
+	local ws: Workspace = game:GetService("Workspace")
+	local old = ws:FindFirstChild("PlayerSpawnPad")
+	if old then
+		old:Destroy()
+	end
+	local pos: Vector3 = MapBuilder.GetPlayerSpawn()
+	local pad = newPart({
+		Name = "PlayerSpawnPad",
+		Size = Vector3.new(30, 2, 30),
+		Position = Vector3.new(pos.X, 1, pos.Z),
+		Material = Enum.Material.Concrete,
+		Color = Color3.fromRGB(96, 96, 102),
+	})
+	pad.Parent = ws
+end
+
+----------------------------------------------------------------------
+-- Spawn helpers (zone maths)
+----------------------------------------------------------------------
+
+-- The centre of zone 1 along Z. ZoneCount zones of ZoneWidth are laid out
+-- starting at -ArenaSize/2, so zone 1 is the first slab.
+local function zoneCenter(m: MapSettings, zone: number): number
+	local half: number = m.ArenaSize / 2
+	local width: number = m.ZoneWidth
+	return -half + width * (zone - 1) + width / 2
+end
+
+-- Where players appear: the arrival parking lot, centre of zone 1.
+--
+-- CRITICAL: this must be the centre of zone 1, NOT the geometric centre of the
+-- arena. The arena is split into zones by solid interior wings, and the arena
+-- centre may sit exactly on top of a boundary wall. Spawning there wedges the
+-- player inside geometry with every neighbouring door shut and unaffordable —
+-- the classic "stuck in a room at game start" bug.
+function MapBuilder.GetPlayerSpawn(): Vector3
+	local m = mapSettings()
+	local z: number = zoneCenter(m, 1)
+	return Vector3.new(0, 6, z)
+end
+
+-- Kept for compatibility with existing call sites (MapBuilder consumers and
+-- ZombieAI's drift fallback both historically read GetCenterSpawn).
+function MapBuilder.GetCenterSpawn(): Vector3
+	return MapBuilder.GetPlayerSpawn()
+end
+
+----------------------------------------------------------------------
+-- Build orchestration
+----------------------------------------------------------------------
+
 function MapBuilder.Build(): Folder
 	local m = mapSettings()
 	local rand = RNG.new(m.Seed)
 
 	local root = ensureRoot()
-	buildFloor(root, m)
-	buildWalls(root, m)
-	buildCover(root, m, rand)
-	buildBarrels(root, m, rand)
-	buildAmbience(root, m, rand)
+	buildSite(root, m)
+	buildBuildings(root)
+	buildPitch(root)
+	buildCourt(root)
+	buildParking(root, rand)
+	buildPlayground(root, rand)
+	buildYardProps(root)
+	buildSignage(root)
+	buildForest(root, rand)
+	buildBoundary(root, m)
 	buildZonesAndDoors(root, m)
 	buildSpawnPoints(root, m)
 	buildPlayerSpawn(m)
+	buildLightFittings(root, rand)
 	buildLighting()
 
 	return root
@@ -3554,15 +4597,223 @@ function MapBuilder.GetSpawnPoints(): { Part }
 	return out
 end
 
-function MapBuilder.GetCenterSpawn(): Vector3
-	return Vector3.new(0, 6, 0)
-end
-
 return MapBuilder
 ]]></string>
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="16">
+        <Properties>
+          <string name="Name">Music</string>
+          <string name="Source"><![CDATA[--!strict
+-- Music and layered audio for Zombie Uprising.
+--
+-- Roblox cannot synthesize PCM from Luau, so unlike the particle effects this
+-- system necessarily uses catalogue asset ids (all Roblox-owned, long-lived).
+-- Every call is pcall-guarded and every asset load is treated as fallible:
+-- if audio is unavailable the game runs exactly as before, just silent.
+--
+-- Layering, in priority order:
+--   1. Ambient drone  — always on once the server boots, quiet.
+--   2. Wave music     — crossfades in when a wave goes active; playback speed
+--                       rises with wave number so round 20 feels more frantic
+--                       than round 2 (the escalating-intensity trick the genre
+--                       uses instead of scoring more tracks).
+--   3. Boss music     — replaces wave music on boss rounds, louder and slower.
+--
+-- The server owns the "what should be playing" decision and broadcasts it;
+-- clients own actual playback, because only the local player hears their mix.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+
+local Music = {}
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+
+local A: any = Config.Audio
+
+local currentTrack: any = nil
+local targetName: string = "None"
+local started: boolean = false
+
+local TRACKS: { [string]: { Id: string, Volume: number, Looped: boolean } } = {
+	Ambient = {
+		Id = A.AmbientMusicId,
+		Volume = A.AmbientVolume,
+		Looped = true,
+	},
+	Wave = {
+		Id = A.WaveMusicId,
+		Volume = A.WaveMusicVolume,
+		Looped = true,
+	},
+	Boss = {
+		Id = A.BossMusicId,
+		Volume = A.BossMusicVolume,
+		Looped = true,
+	},
+}
+
+-- Tracks are crossfaded by ramping Volume in small steps (see crossfadeTo).
+-- TweenService would be tidier but adds a service dependency that can fail;
+-- this cannot.
+
+local function ensureTrack(name: string): any
+	local def = TRACKS[name]
+	if not def then return nil end
+	local ok, snd = pcall(function()
+		local s = Instance.new("Sound")
+		s.Name = "ZA_Music_" .. name
+		s.SoundId = def.Id
+		s.Volume = 0
+		s.Looped = true
+		s.RollOffMaxDistance = 100000
+		s.Parent = SoundService
+		return s
+	end)
+	if not ok then return nil end
+	return snd
+end
+
+-- Fades whatever is playing out and `name` in. Both tracks live in SoundService
+-- so the crossfade is audible rather than a hard cut.
+local function crossfadeTo(name: string, pitch: number)
+	if not A.Enabled then return end
+	if targetName == name then
+		-- Already on the right bed; just retune pitch (wave escalation).
+		pcall(function()
+			if currentTrack then
+				local t: any = currentTrack
+				t.PlaybackSpeed = pitch
+			end
+		end)
+		return
+	end
+
+	local incoming = ensureTrack(name)
+	if not incoming then return end
+
+	local outgoing = currentTrack
+	currentTrack = incoming
+	targetName = name
+
+	pcall(function()
+		local inc: any = incoming
+		inc.PlaybackSpeed = pitch
+		inc.Volume = 0
+		inc:Play()
+	end)
+
+	local steps = math.max(1, math.floor((tonumber(A.MusicFadeTime) or 1.8) / 0.1))
+	task.spawn(function()
+		for i = 1, steps do
+			task.wait(0.1)
+			local t = i / steps
+			pcall(function()
+				local inc: any = incoming
+				inc.Volume = (TRACKS[name].Volume) * t
+			end)
+			if outgoing then
+				pcall(function()
+					local out: any = outgoing
+					out.Volume = (out.Volume) * (1 - t)
+				end)
+			end
+		end
+		if outgoing then
+			pcall(function()
+				local out: any = outgoing
+				out:Stop()
+				out:Destroy()
+			end)
+		end
+	end)
+end
+
+-- Public: decide what should be playing from the authoritative wave state.
+function Music.SetWavePhase(phase: string, waveNumber: number, isBoss: boolean)
+	if not A.Enabled then return end
+	if phase == "Active" then
+		if isBoss then
+			crossfadeTo("Boss", 1.0)
+		else
+			local base = tonumber(A.WavePitchBase) or 1.0
+			local per = tonumber(A.WavePitchPerWave) or 0.01
+			local max = tonumber(A.WavePitchMax) or 1.35
+			local n = math.max(1, tonumber(waveNumber) or 1)
+			local pitch = math.min(max, base + per * (n - 1))
+			crossfadeTo("Wave", pitch)
+		end
+	elseif phase == "Intermission" or phase == "Ended" then
+		crossfadeTo("Ambient", 1.0)
+	end
+end
+
+function Music.Start()
+	if started then return end
+	started = true
+	crossfadeTo("Ambient", 1.0)
+end
+
+function Music.Init()
+	Music.Start()
+end
+
+----------------------------------------------------------------------
+-- Client-side playback
+--
+-- The server decides *what* should be playing (see SetWavePhase) but only a
+-- client can actually produce audio for its own player. Start local playback
+-- and follow the server's phase broadcasts.
+----------------------------------------------------------------------
+
+local RunService = game:GetService("RunService")
+local clientStarted: boolean = false
+
+local function clientBoot()
+	if clientStarted then
+		return
+	end
+	clientStarted = true
+
+	Music.Start()
+
+	pcall(function()
+		local waveRemote = Remotes.WaveStateChanged()
+		waveRemote.OnClientEvent:Connect(function(payload: any)
+			local p: any = payload
+			local phase: string = tostring(p.Phase or "")
+			if phase == "" then
+				return
+			end
+			-- The WaveState payload carries no boss flag, so derive it from the
+			-- same parity rule the WaveDirector uses for scheduling bosses.
+			local every: number = 0
+			pcall(function()
+				every = Config.Wave.BossEveryNWaves
+			end)
+			local wave: number = tonumber(p.Wave) or 1
+			local isBoss: boolean = every > 0 and wave % every == 0
+			Music.SetWavePhase(phase, wave, isBoss)
+		end)
+	end)
+end
+
+-- Called by ClientController on the client; a no-op everywhere else.
+function Music.StartClient()
+	pcall(function()
+		if RunService:IsClient() then
+			clientBoot()
+		end
+	end)
+end
+
+return Music
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="17">
         <Properties>
           <string name="Name">Progression</string>
           <string name="Source"><![CDATA[--!strict
@@ -3861,6 +5112,29 @@ local function spendCoins(player: Player, amount: number, reason: string?): bool
 	return res == true
 end
 
+-- Weapons is required lazily: it resolves Progression too, so a top-level
+-- require here would be circular.
+local weaponsCache: any = nil
+local weaponsTried = false
+
+local function resolveWeapons(): any?
+	if weaponsCache ~= nil then
+		return weaponsCache
+	end
+	if weaponsTried then
+		return nil
+	end
+	weaponsTried = true
+	local ok, mod = pcall(function()
+		return require(script.Parent:FindFirstChild("Weapons"))
+	end)
+	if ok and typeof(mod) == "table" then
+		weaponsCache = mod
+		return mod
+	end
+	return nil
+end
+
 local function notify(player: Player, message: string)
 	pcall(function()
 		Remotes.Notify():FireClient(player, message)
@@ -3899,6 +5173,18 @@ function Progression.PurchaseWeapon(player: Player, weaponId: string): PurchaseR
 	run.OwnedWeapons[weaponId] = true
 	run.SpentThisRun += cost
 	Progression.EquipWeapon(player, weaponId)
+
+	-- Refresh (not Equip): a NEW weapon arrives with a full loadout, and the
+	-- fire path reads entry.WeaponId which only Weapons.Refresh updates. Without
+	-- this call the just-bought gun shows on the HUD yet still fires nothing.
+	local wsys = resolveWeapons()
+	if wsys and type((wsys :: any).Refresh) == "function" then
+		pcall(function()
+			local fn: any = (wsys :: any).Refresh
+			fn(wsys, player)
+		end)
+	end
+
 	notify(player, "Purchased " .. def.DisplayName)
 	return { Ok = true }
 end
@@ -3969,6 +5255,16 @@ function Progression.GrantWeapon(player: Player, weaponId: string): boolean
 	local run = Progression.GetRun(player)
 	run.OwnedWeapons[weaponId] = true
 	run.CurrentWeapon = weaponId
+
+	-- Full loadout for a fresh prize, and the fire path must actually switch
+	-- to it — entry.WeaponId only changes through Weapons.Refresh.
+	local wsys = resolveWeapons()
+	if wsys and type((wsys :: any).Refresh) == "function" then
+		pcall(function()
+			local fn: any = (wsys :: any).Refresh
+			fn(wsys, player)
+		end)
+	end
 	return true
 end
 
@@ -4119,6 +5415,31 @@ function Progression.Init()
 		end
 	end)
 
+	-- Hotkey weapon swap (1-4). Equipping is validated server-side: the player
+	-- must actually own the weapon, so the client cannot equip a locked gun.
+	Remotes.RequestSwitchWeapon().OnServerEvent:Connect(function(player: Player, weaponId: any)
+		local id: string = tostring(weaponId or "")
+		if id == "" then
+			return
+		end
+		if not Progression.OwnsWeapon(player, id) then
+			notify(player, "You do not own that weapon")
+			return
+		end
+		if Progression.EquipWeapon(player, id) then
+			-- Equip, not Refresh: a swap must not restock the reserve, or the
+			-- 1-4 hotkeys become an infinite-ammo exploit around the economy.
+			local wsys = resolveWeapons()
+			if wsys and type((wsys :: any).Equip) == "function" then
+				pcall(function()
+					local fn: any = (wsys :: any).Equip
+					fn(wsys, player, id)
+				end)
+			end
+			notify(player, "Equipped " .. tostring(id))
+		end
+	end)
+
 	Remotes.RequestRespawn().OnServerEvent:Connect(function(player: Player)
 		local key = playerKey(player)
 		if respawnLocks[key] then
@@ -4147,7 +5468,7 @@ return Progression
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="17">
+      <Item class="ModuleScript" referent="18">
         <Properties>
           <string name="Name">WaveDirector</string>
           <string name="Source"><![CDATA[--!strict
@@ -4350,6 +5671,31 @@ local function setPhase(phase: string)
 		state.Phase = phase
 	end
 	broadcast()
+
+	-- Music beds follow the phase: ambient while shopping, combat when a wave
+	-- is live, and a heavier cue on boss rounds. Driven from setPhase so every
+	-- transition is covered in exactly one place.
+	pcall(function()
+		local musicInst = script.Parent:FindFirstChild("Music")
+		if not musicInst then
+			return
+		end
+		local okM, mod = pcall(function()
+			return require(musicInst)
+		end)
+		if not okM or not mod or type((mod :: any).SetWavePhase) ~= "function" then
+			return
+		end
+		local mset: any = (mod :: any).SetWavePhase
+		local wave: number = state.Wave
+		local isBoss: boolean = phase == PHASE_ACTIVE and WaveDirector.IsBossWave(wave)
+		-- Spawn: a slow asset load must never stall the wave loop.
+		task.spawn(function()
+			pcall(function()
+				mset(mod, phase, wave, isBoss)
+			end)
+		end)
+	end)
 end
 
 ----------------------------------------------------------------------
@@ -4536,7 +5882,12 @@ local function spawnOne(waveNumber: number, archetypeId: string?, forceBoss: boo
 	local callSpawn: any = spawnFn
 	local model: any = nil
 	pcall(function()
-		model = callSpawn(callSpawn, id, waveNumber)
+		-- ZombieAI.Spawn is declared with dots, so it must be called WITHOUT a
+		-- self argument. Passing the function as `self` shifted every parameter
+		-- by one, so archetypeId received a function and archetypeOf() silently
+		-- fell back to Walker — every wave was cloned Walkers and Brutes,
+		-- Runners, Spitters and theme waves never appeared at all.
+		model = callSpawn(id, waveNumber)
 	end)
 	if model then
 		-- Special-wave scaling is derived deterministically inside ZombieAI
@@ -4995,7 +6346,7 @@ return WaveDirector
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="18">
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">Weapons</string>
           <string name="Source"><![CDATA[--!strict
@@ -5332,6 +6683,32 @@ function Weapons.Refresh(player: Player)
 		-- Top the magazine up to the new capacity.
 		e.AmmoInMag = mag
 	end
+	Weapons.Replicate(player)
+end
+
+-- Hot-swaps to another owned weapon WITHOUT restocking ammo.
+--
+-- Refresh() deliberately tops everything up because it services purchases and
+-- magazine perks. If the 1-4 hotkeys went through it too, players could cycle
+-- weapons for infinite reserve — a free pass around the entire ammo economy.
+-- A swap still grants a full magazine so it is instantly useful, but reserve
+-- carries over untouched.
+function Weapons.Equip(player: Player, weaponId: string)
+	local def = defOf(weaponId)
+	if not def then
+		return
+	end
+	local e = entries[player]
+	if not e then
+		return
+	end
+	if e.WeaponId == weaponId then
+		return
+	end
+	e.WeaponId = weaponId
+	e.Reloading = false
+	e.ReloadEndsAt = nil
+	e.AmmoInMag = magazineSize(def, Weapons.GetModifiers(player))
 	Weapons.Replicate(player)
 end
 
@@ -5884,7 +7261,7 @@ return Weapons
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="19">
+      <Item class="ModuleScript" referent="20">
         <Properties>
           <string name="Name">ZombieAI</string>
           <string name="Source"><![CDATA[--!strict
@@ -6391,6 +7768,17 @@ end
 local REPATH_INTERVAL = 0.6
 local WAYPOINT_DISTANCE = 4
 
+-- How often a brain may retry pathfinding after a failure. A permanent
+-- PathFailed flag meant one bad ComputeAsync silenced navigation for the rest
+-- of that zombie's life; with dozens of rigid-part zombies spawning on cover
+-- this silently produced a field of statues. Allow periodic retries instead.
+local FAIL_RETRY_INTERVAL = 2.0
+
+-- Lunge tuning: within LUNGE_RANGE studs a zombie gains up to LUNGE_BONUS of
+-- extra move speed, ramping linearly as it gets closer.
+local LUNGE_RANGE = 22
+local LUNGE_BONUS = 0.45
+
 -- Recomputes the chase path. On any failure we set PathFailed so the brain
 -- falls back to direct MoveTo for the rest of its life (perf: no repeated
 -- doomed ComputeAsync calls every tick).
@@ -6464,9 +7852,22 @@ local function moveDirect(brain: Brain, goal: any)
 end
 
 local function chaseStep(brain: Brain, goal: any, now: number)
+	-- Recover from a previously failed path: the obstruction may have cleared
+	-- (explosive barrel gone, another zombie moved) so retry occasionally.
+	if brain.PathFailed and now >= (brain.NextRepathAt or 0) then
+		brain.PathFailed = false
+		brain.NextRepathAt = 0
+	end
+
 	if now >= brain.NextRepathAt then
 		brain.NextRepathAt = now + REPATH_INTERVAL
 		computePath(brain, goal)
+	end
+
+	-- If navigation just failed again, back off before retrying rather than
+	-- hammering ComputeAsync every frame, and fall through to direct MoveTo.
+	if brain.PathFailed then
+		brain.NextRepathAt = now + FAIL_RETRY_INTERVAL
 	end
 
 	local wps = brain.Waypoints
@@ -6565,6 +7966,28 @@ local function brainLoop(brain: Brain)
 		end
 
 		local now: number = toNumber(stepped, os.clock())
+		-- Lunge: zombies accelerate as they close on a target. This is what
+		-- turns "walk away and shoot" into real pressure — disengaging must
+		-- cost you, which is the core of the zombie-survival feel.
+		pcall(function()
+			local targetRoot = brain.Target
+			if not targetRoot or not brain.Root then
+				return
+			end
+			local rp: any = brain.Root.Position
+			local tp: any = targetRoot.Position
+			local dx: number = tp.X - rp.X
+			local dy: number = tp.Y - rp.Y
+			local dz: number = tp.Z - rp.Z
+			local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+			if dist < LUNGE_RANGE then
+				local t: number = 1 - (dist / LUNGE_RANGE)
+				brain.Humanoid.WalkSpeed = brain.WalkSpeed * (1 + LUNGE_BONUS * t)
+			else
+				brain.Humanoid.WalkSpeed = brain.WalkSpeed
+			end
+		end)
+
 		local goal = nearestTarget(brain)
 		if goal then
 			chaseStep(brain, goal.Position, now)
@@ -6930,11 +8353,11 @@ return ZombieAI
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="20">
+  <Item class="ServerScriptService" referent="21">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="21">
+    <Item class="Script" referent="22">
       <Properties>
         <string name="Name">GameServer</string>
         <token name="RunContext">0</token>
@@ -7034,6 +8457,7 @@ local _doorsSystem: any = startSystem("Doors")
 local machinesSystem: any = startSystem("Machines")
 local _downedSystem: any = startSystem("Downed")
 local _badgesSystem: any = startSystem("Badges")
+local _musicSystem: any = startSystem("Music")
 
 -- Machines are physical objects, so place them once the map exists.
 do
@@ -7141,18 +8565,16 @@ local function onPlayerAdded(player: Player)
 
 		local hrp = character:WaitForChild("HumanoidRootPart", 10)
 		if hrp then
-			local okMB, center: any = pcall(function()
-				return require(ReplicatedStorage:WaitForChild("Systems"):WaitForChild("MapBuilder"))
-			end)
-			if not okMB then center = nil end
-			if center and type(center.GetCenterSpawn) == "function" then
-				local ok, pos = pcall(function()
-					return center.GetCenterSpawn()
-				end)
-				if ok and pos then
-					(hrp :: any).CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+			-- Place the player at the zone-1 spawn pad. This must never be the
+			-- geometric arena centre: interior boundary walls run through it.
+			local spawnPos: Vector3 = Vector3.new(0, 6, -Config.Map.ArenaSize / 2 + Config.Map.ZoneWidth / 2)
+			pcall(function()
+				if type(mapBuilderMod.GetPlayerSpawn) == "function" then
+					local fn: any = mapBuilderMod.GetPlayerSpawn
+					spawnPos = fn(mapBuilderMod)
 				end
-			end
+			end)
+			;(hrp :: any).CFrame = CFrame.new(spawnPos + Vector3.new(0, 5, 0))
 		end
 	end)
 
@@ -7249,20 +8671,20 @@ trace(string.format("%s v%s boot complete", Config.GameName, Config.Version))
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterGui" referent="22">
+  <Item class="StarterGui" referent="23">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="23">
+  <Item class="StarterPlayer" referent="24">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="24">
+    <Item class="StarterPlayerScripts" referent="25">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="25">
+      <Item class="LocalScript" referent="26">
         <Properties>
           <string name="Name">ClientController</string>
           <string name="Source"><![CDATA[--!strict
@@ -7292,6 +8714,8 @@ local Remotes = require(Shared:WaitForChild("Remotes"))
 local HUD = require(script.Parent:WaitForChild("HUD"))
 local ShopUI = require(script.Parent:WaitForChild("ShopUI"))
 local Interact = require(script.Parent:WaitForChild("Interact"))
+local Instructions = require(script.Parent:WaitForChild("Instructions"))
+local Music = require(ReplicatedStorage:WaitForChild("Systems"):WaitForChild("Music"))
 
 -- Structural mirrors. luau-analyze cannot resolve exported types across
 -- `require`, so each shape is redeclared locally (kept in sync with the shared
@@ -7362,6 +8786,8 @@ local boundActions: { string } = {}
 local fireRemote: any = nil
 local reloadRemote: any = nil
 local respawnRemote: any = nil
+local switchRemote: any = nil
+local _shopToggleRemote: any = nil
 
 local weaponState: WeaponState? = nil
 local statsState: PlayerStats? = nil
@@ -7425,6 +8851,25 @@ local function ensureRemotes()
 	end
 	if respawnRemote == nil then
 		respawnRemote = resolveRemote("RequestRespawn")
+	end
+	if switchRemote == nil then
+		switchRemote = resolveRemote("RequestSwitchWeapon")
+	end
+end
+
+-- Ordered weapon slots for the 1-4 hotkeys. Mirrors Config.Weapons' intent and
+-- stays stable so muscle memory survives balance tweaks.
+local WEAPON_SLOTS: { string } = { "Pistol", "SMG", "Shotgun", "Rifle" }
+
+local function requestEquipSlot(slot: number)
+	if dead then return end
+	local weaponId = WEAPON_SLOTS[slot]
+	if not weaponId then return end
+	ensureRemotes()
+	if switchRemote then
+		pcall(function()
+			switchRemote:FireServer(weaponId)
+		end)
 	end
 end
 
@@ -7826,6 +9271,37 @@ local function bindActions()
 			Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift)
 		table.insert(boundActions, SPRINT_ACTION)
 	end)
+
+	-- Weapon hotkeys 1-4 map to the slots above.
+	pcall(function()
+		local codes = {
+			Enum.KeyCode.One, Enum.KeyCode.Two,
+			Enum.KeyCode.Three, Enum.KeyCode.Four,
+		}
+		for slot, code in ipairs(codes) do
+			local actionName = string.format("ZU_Weapon%d", slot)
+			ContextActionService:BindAction(actionName, function(_n: string, state: any, _i: any)
+				if state == Enum.UserInputState.Begin then
+					pcall(requestEquipSlot, slot)
+				end
+				return Enum.ContextActionResult.Pass
+			end, false, code)
+			table.insert(boundActions, actionName)
+		end
+	end)
+
+	-- B re-opens the shop during intermission.
+	pcall(function()
+		ContextActionService:BindAction("ZU_ShopToggle", function(_n: string, state: any, _i: any)
+			if state == Enum.UserInputState.Begin then
+				pcall(function()
+					ShopUI.SetVisible(true)
+				end)
+			end
+			return Enum.ContextActionResult.Pass
+		end, false, Enum.KeyCode.B)
+		table.insert(boundActions, "ZU_ShopToggle")
+	end)
 end
 
 local function onInputBegan(input: any, gameProcessed: boolean)
@@ -7941,6 +9417,12 @@ local function boot()
 			Interact.Init()
 		end)
 		pcall(function()
+			Instructions.Init()
+		end)
+		pcall(function()
+			Music.StartClient()
+		end)
+		pcall(function()
 			HUD.OnRespawnRequested(function()
 				requestRespawn()
 			end)
@@ -7994,7 +9476,7 @@ return nil
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="26">
+      <Item class="LocalScript" referent="27">
         <Properties>
           <string name="Name">HUD</string>
           <string name="Source"><![CDATA[--!strict
@@ -9206,7 +10688,321 @@ return HUD
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="27">
+      <Item class="LocalScript" referent="28">
+        <Properties>
+          <string name="Name">Instructions</string>
+          <string name="Source"><![CDATA[--!strict
+-- How-to-play panel.
+--
+-- The game's objective and controls were nowhere in the client: a new player
+-- joined into a dark arena with no idea what to do or which key did what. This
+-- module owns a single "ZombieHelp" ScreenGui that:
+--   * auto-opens once per session the first time the player spawns in
+--   * is toggled with F1 / H (and a persistent "?" button)
+--   * lists the objective and every control from one table, so the controls
+--     can never drift from what is actually bound in ClientController.
+--
+-- Everything is built in code with no external assets, matching the rest of
+-- the UI layer.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+
+local Instructions = {}
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+
+local COL_BG = Color3.fromRGB(10, 12, 17)
+local COL_PANEL = Color3.fromRGB(20, 23, 31)
+local COL_TEXT = Color3.fromRGB(236, 240, 247)
+local COL_DIM = Color3.fromRGB(150, 158, 172)
+local COL_ACCENT = Color3.fromRGB(232, 196, 88)
+local COL_GOOD = Color3.fromRGB(88, 208, 128)
+
+-- Single source of truth for what we tell the player. Keep this in sync with
+-- ClientController.bindActions().
+type ControlRow = { Key: string, Desc: string }
+
+local CONTROLS: { ControlRow } = {
+	{ Key = "Left Mouse", Desc = "Fire your weapon" },
+	{ Key = "R", Desc = "Reload" },
+	{ Key = "Shift", Desc = "Sprint — faster than zombies, use it to escape" },
+	{ Key = "E", Desc = "Interact — open doors, buy from machines" },
+	{ Key = "B", Desc = "Open the shop between waves" },
+	{ Key = "1 – 4", Desc = "Switch weapon" },
+	{ Key = "F1 / H", Desc = "Show or hide these instructions" },
+}
+
+local OBJECTIVE_LINES: { string } = {
+	"The horde has overrun Lovisedalsskolan in Vallentuna — the schoolyard, the pitch and the parking lot.",
+	"Survive escalating waves of the undead and get as deep as you can.",
+	"Zombies spawn around you and hunt you down — they are faster than you walk, so keep moving.",
+	"Kill them for coins. Aim for the head: headshots pay double and kill far quicker.",
+	"Between waves the shop opens. Spend coins on better weapons and perks.",
+	"Open doors to unlock new zones — the pitch, the sports hall and stronger gear lie deeper in.",
+	"Reach wave " .. tostring(Config.Wave.ExtractionWave) .. " to extract and win the run.",
+}
+
+local started: boolean = false
+local gui: any = nil
+local panel: any = nil
+local toggleButton: any = nil
+local visible: boolean = false
+local autoShown: boolean = false
+
+local localPlayer: any = Players.LocalPlayer
+
+local function newFrame(name: string): any
+	local f = Instance.new("Frame")
+	f.Name = name
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	f.Size = UDim2.new(0, 0, 0, 0)
+	f.Position = UDim2.new(0, 0, 0, 0)
+	return f
+end
+
+local function newLabel(name: string): any
+	local l = Instance.new("TextLabel")
+	l.Name = name
+	l.BackgroundTransparency = 1
+	l.BorderSizePixel = 0
+	l.Size = UDim2.new(0, 0, 0, 0)
+	l.Position = UDim2.new(0, 0, 0, 0)
+	l.Text = ""
+	l.TextColor3 = COL_TEXT
+	l.TextSize = 16
+	l.Font = Enum.Font.Gotham
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextYAlignment = Enum.TextYAlignment.Top
+	return l
+end
+
+local function setVisible(next: boolean)
+	visible = next
+	pcall(function()
+		if panel then
+			panel.Visible = visible
+		end
+	end)
+end
+
+local function build(parent: any)
+	gui = Instance.new("ScreenGui")
+	gui.Name = "ZombieHelp"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 60
+	gui.Parent = parent
+
+	panel = newFrame("HelpPanel")
+	panel.Size = UDim2.new(0.52, 0, 0.62, 0)
+	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.BackgroundColor3 = COL_BG
+	panel.BackgroundTransparency = 0.06
+	panel.Visible = false
+	panel.ZIndex = 60
+	panel.Parent = gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = panel
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COL_ACCENT
+	stroke.Thickness = 2
+	stroke.Parent = panel
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 18)
+	pad.PaddingBottom = UDim.new(0, 18)
+	pad.PaddingLeft = UDim.new(0, 22)
+	pad.PaddingRight = UDim.new(0, 22)
+	pad.Parent = panel
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 8)
+	layout.Parent = panel
+
+	local title = newLabel("Title")
+	title.Size = UDim2.new(1, 0, 0, 40)
+	title.Text = "ZOMBIE UPRISING — HOW TO PLAY"
+	title.TextSize = 24
+	title.TextColor3 = COL_ACCENT
+	title.Font = Enum.Font.GothamBold
+	title.LayoutOrder = 1
+	title.Parent = panel
+
+	local objHeader = newLabel("ObjHeader")
+	objHeader.Size = UDim2.new(1, 0, 0, 26)
+	objHeader.Text = "OBJECTIVE"
+	objHeader.TextSize = 17
+	objHeader.TextColor3 = COL_GOOD
+	objHeader.Font = Enum.Font.GothamBold
+	objHeader.LayoutOrder = 2
+	objHeader.Parent = panel
+
+	local objective = newLabel("Objective")
+	objective.Size = UDim2.new(1, 0, 0, 120)
+	objective.AutomaticSize = Enum.AutomaticSize.Y
+	objective.Text = "• " .. table.concat(OBJECTIVE_LINES, "\n• ")
+	objective.TextSize = 15
+	objective.TextColor3 = COL_TEXT
+	objective.TextWrapped = true
+	objective.LayoutOrder = 3
+	objective.Parent = panel
+
+	local ctrlHeader = newLabel("CtrlHeader")
+	ctrlHeader.Size = UDim2.new(1, 0, 0, 26)
+	ctrlHeader.Text = "CONTROLS"
+	ctrlHeader.TextSize = 17
+	ctrlHeader.TextColor3 = COL_GOOD
+	ctrlHeader.Font = Enum.Font.GothamBold
+	ctrlHeader.LayoutOrder = 4
+	ctrlHeader.Parent = panel
+
+	for i, entry in ipairs(CONTROLS) do
+		local row = newFrame("Row_" .. tostring(i))
+		row.Size = UDim2.new(1, 0, 0, 24)
+		row.LayoutOrder = 10 + i
+		row.Parent = panel
+
+		local key = newLabel("Key")
+		key.Size = UDim2.new(0.3, 0, 1, 0)
+		key.Text = entry.Key
+		key.TextSize = 15
+		key.TextColor3 = COL_ACCENT
+		key.Font = Enum.Font.GothamBold
+		key.Parent = row
+
+		local desc = newLabel("Desc")
+		desc.Size = UDim2.new(0.7, 0, 1, 0)
+		desc.Position = UDim2.new(0.3, 0, 0, 0)
+		desc.Text = entry.Desc
+		desc.TextSize = 15
+		desc.TextColor3 = COL_DIM
+		desc.Parent = row
+	end
+
+	local close = Instance.new("TextButton")
+	close.Name = "Close"
+	close.Size = UDim2.new(0.4, 0, 0, 40)
+	close.BackgroundColor3 = COL_GOOD
+	close.BackgroundTransparency = 0.12
+	close.Text = "GOT IT — PLAY"
+	close.TextSize = 17
+	close.TextColor3 = COL_BG
+	close.Font = Enum.Font.GothamBold
+	close.LayoutOrder = 99
+	close.Parent = panel
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 6)
+	closeCorner.Parent = close
+
+	close.MouseButton1Click:Connect(function()
+		setVisible(false)
+	end)
+
+	-- Always-available help button, bottom-centre, so the panel is discoverable
+	-- long after this first-run panel has been dismissed.
+	toggleButton = Instance.new("TextButton")
+	toggleButton.Name = "HelpButton"
+	toggleButton.Size = UDim2.new(0, 34, 0, 34)
+	toggleButton.Position = UDim2.new(0.5, 0, 1, -46)
+	toggleButton.AnchorPoint = Vector2.new(0.5, 0)
+	toggleButton.BackgroundColor3 = COL_PANEL
+	toggleButton.BackgroundTransparency = 0.25
+	toggleButton.Text = "?"
+	toggleButton.TextSize = 20
+	toggleButton.TextColor3 = COL_ACCENT
+	toggleButton.Font = Enum.Font.GothamBold
+	toggleButton.ZIndex = 61
+	toggleButton.Parent = gui
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 17)
+	btnCorner.Parent = toggleButton
+
+	toggleButton.MouseButton1Click:Connect(function()
+		setVisible(not visible)
+	end)
+end
+
+local function toggleHelp()
+	setVisible(not visible)
+end
+
+function Instructions.Init()
+	if started then return end
+	started = true
+
+	pcall(function()
+		local pgui = localPlayer and localPlayer:WaitForChild("PlayerGui", 8)
+		if pgui then
+			build(pgui)
+		end
+	end)
+
+	pcall(function()
+		ContextActionService:BindAction("ZU_Help", function(_n: string, state: any, _i: any)
+			if state == Enum.UserInputState.Begin then
+				pcall(toggleHelp)
+			end
+			return Enum.ContextActionResult.Pass
+		end, false, Enum.KeyCode.F1, Enum.KeyCode.H)
+	end)
+
+	pcall(function()
+		UserInputService.InputBegan:Connect(function(input: any, gameProcessed: boolean)
+			if gameProcessed then return end
+			local kc: any = input.KeyCode
+			if kc == Enum.KeyCode.F1 or kc == Enum.KeyCode.H then
+				pcall(toggleHelp)
+			end
+		end)
+	end)
+
+	-- Auto-open once, shortly after the first character spawns, so the very
+	-- first thing a new player reads is what they are supposed to do.
+	if not autoShown then
+		autoShown = true
+		task.delay(2.5, function()
+			setVisible(true)
+			task.delay(22, function()
+				-- Auto-dismiss if they clearly got the idea and started playing.
+				if visible then
+					setVisible(false)
+				end
+			end)
+		end)
+	end
+end
+
+-- Called by ClientController so the panel can also be opened from elsewhere.
+function Instructions.Show()
+	setVisible(true)
+end
+
+function Instructions.Hide()
+	setVisible(false)
+end
+
+function Instructions.IsVisible(): boolean
+	return visible
+end
+
+return Instructions
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="LocalScript" referent="29">
         <Properties>
           <string name="Name">Interact</string>
           <string name="Source"><![CDATA[--!strict
@@ -9435,7 +11231,7 @@ return Interact
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="28">
+      <Item class="LocalScript" referent="30">
         <Properties>
           <string name="Name">ShopUI</string>
           <string name="Source"><![CDATA[--!strict

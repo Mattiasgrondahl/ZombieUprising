@@ -294,6 +294,29 @@ local function spendCoins(player: Player, amount: number, reason: string?): bool
 	return res == true
 end
 
+-- Weapons is required lazily: it resolves Progression too, so a top-level
+-- require here would be circular.
+local weaponsCache: any = nil
+local weaponsTried = false
+
+local function resolveWeapons(): any?
+	if weaponsCache ~= nil then
+		return weaponsCache
+	end
+	if weaponsTried then
+		return nil
+	end
+	weaponsTried = true
+	local ok, mod = pcall(function()
+		return require(script.Parent:FindFirstChild("Weapons"))
+	end)
+	if ok and typeof(mod) == "table" then
+		weaponsCache = mod
+		return mod
+	end
+	return nil
+end
+
 local function notify(player: Player, message: string)
 	pcall(function()
 		Remotes.Notify():FireClient(player, message)
@@ -332,6 +355,18 @@ function Progression.PurchaseWeapon(player: Player, weaponId: string): PurchaseR
 	run.OwnedWeapons[weaponId] = true
 	run.SpentThisRun += cost
 	Progression.EquipWeapon(player, weaponId)
+
+	-- Refresh (not Equip): a NEW weapon arrives with a full loadout, and the
+	-- fire path reads entry.WeaponId which only Weapons.Refresh updates. Without
+	-- this call the just-bought gun shows on the HUD yet still fires nothing.
+	local wsys = resolveWeapons()
+	if wsys and type((wsys :: any).Refresh) == "function" then
+		pcall(function()
+			local fn: any = (wsys :: any).Refresh
+			fn(wsys, player)
+		end)
+	end
+
 	notify(player, "Purchased " .. def.DisplayName)
 	return { Ok = true }
 end
@@ -402,6 +437,16 @@ function Progression.GrantWeapon(player: Player, weaponId: string): boolean
 	local run = Progression.GetRun(player)
 	run.OwnedWeapons[weaponId] = true
 	run.CurrentWeapon = weaponId
+
+	-- Full loadout for a fresh prize, and the fire path must actually switch
+	-- to it — entry.WeaponId only changes through Weapons.Refresh.
+	local wsys = resolveWeapons()
+	if wsys and type((wsys :: any).Refresh) == "function" then
+		pcall(function()
+			local fn: any = (wsys :: any).Refresh
+			fn(wsys, player)
+		end)
+	end
 	return true
 end
 
@@ -549,6 +594,31 @@ function Progression.Init()
 		local res = Progression.PurchasePerk(player, perkId)
 		if not res.Ok then
 			notify(player, "Purchase failed: " .. tostring(res.Reason))
+		end
+	end)
+
+	-- Hotkey weapon swap (1-4). Equipping is validated server-side: the player
+	-- must actually own the weapon, so the client cannot equip a locked gun.
+	Remotes.RequestSwitchWeapon().OnServerEvent:Connect(function(player: Player, weaponId: any)
+		local id: string = tostring(weaponId or "")
+		if id == "" then
+			return
+		end
+		if not Progression.OwnsWeapon(player, id) then
+			notify(player, "You do not own that weapon")
+			return
+		end
+		if Progression.EquipWeapon(player, id) then
+			-- Equip, not Refresh: a swap must not restock the reserve, or the
+			-- 1-4 hotkeys become an infinite-ammo exploit around the economy.
+			local wsys = resolveWeapons()
+			if wsys and type((wsys :: any).Equip) == "function" then
+				pcall(function()
+					local fn: any = (wsys :: any).Equip
+					fn(wsys, player, id)
+				end)
+			end
+			notify(player, "Equipped " .. tostring(id))
 		end
 	end)
 

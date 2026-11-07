@@ -25,6 +25,8 @@ local Remotes = require(Shared:WaitForChild("Remotes"))
 local HUD = require(script.Parent:WaitForChild("HUD"))
 local ShopUI = require(script.Parent:WaitForChild("ShopUI"))
 local Interact = require(script.Parent:WaitForChild("Interact"))
+local Instructions = require(script.Parent:WaitForChild("Instructions"))
+local Music = require(ReplicatedStorage:WaitForChild("Systems"):WaitForChild("Music"))
 
 -- Structural mirrors. luau-analyze cannot resolve exported types across
 -- `require`, so each shape is redeclared locally (kept in sync with the shared
@@ -95,6 +97,8 @@ local boundActions: { string } = {}
 local fireRemote: any = nil
 local reloadRemote: any = nil
 local respawnRemote: any = nil
+local switchRemote: any = nil
+local _shopToggleRemote: any = nil
 
 local weaponState: WeaponState? = nil
 local statsState: PlayerStats? = nil
@@ -158,6 +162,25 @@ local function ensureRemotes()
 	end
 	if respawnRemote == nil then
 		respawnRemote = resolveRemote("RequestRespawn")
+	end
+	if switchRemote == nil then
+		switchRemote = resolveRemote("RequestSwitchWeapon")
+	end
+end
+
+-- Ordered weapon slots for the 1-4 hotkeys. Mirrors Config.Weapons' intent and
+-- stays stable so muscle memory survives balance tweaks.
+local WEAPON_SLOTS: { string } = { "Pistol", "SMG", "Shotgun", "Rifle" }
+
+local function requestEquipSlot(slot: number)
+	if dead then return end
+	local weaponId = WEAPON_SLOTS[slot]
+	if not weaponId then return end
+	ensureRemotes()
+	if switchRemote then
+		pcall(function()
+			switchRemote:FireServer(weaponId)
+		end)
 	end
 end
 
@@ -559,6 +582,37 @@ local function bindActions()
 			Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift)
 		table.insert(boundActions, SPRINT_ACTION)
 	end)
+
+	-- Weapon hotkeys 1-4 map to the slots above.
+	pcall(function()
+		local codes = {
+			Enum.KeyCode.One, Enum.KeyCode.Two,
+			Enum.KeyCode.Three, Enum.KeyCode.Four,
+		}
+		for slot, code in ipairs(codes) do
+			local actionName = string.format("ZU_Weapon%d", slot)
+			ContextActionService:BindAction(actionName, function(_n: string, state: any, _i: any)
+				if state == Enum.UserInputState.Begin then
+					pcall(requestEquipSlot, slot)
+				end
+				return Enum.ContextActionResult.Pass
+			end, false, code)
+			table.insert(boundActions, actionName)
+		end
+	end)
+
+	-- B re-opens the shop during intermission.
+	pcall(function()
+		ContextActionService:BindAction("ZU_ShopToggle", function(_n: string, state: any, _i: any)
+			if state == Enum.UserInputState.Begin then
+				pcall(function()
+					ShopUI.SetVisible(true)
+				end)
+			end
+			return Enum.ContextActionResult.Pass
+		end, false, Enum.KeyCode.B)
+		table.insert(boundActions, "ZU_ShopToggle")
+	end)
 end
 
 local function onInputBegan(input: any, gameProcessed: boolean)
@@ -672,6 +726,12 @@ local function boot()
 		-- Door/machine prompts and the downed overlay.
 		pcall(function()
 			Interact.Init()
+		end)
+		pcall(function()
+			Instructions.Init()
+		end)
+		pcall(function()
+			Music.StartClient()
 		end)
 		pcall(function()
 			HUD.OnRespawnRequested(function()

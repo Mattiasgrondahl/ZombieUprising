@@ -54,23 +54,41 @@ Check the **Output** window immediately. You want to see:
 a failed module logs a warning while the rest still boots — read those warnings, they identify
 exactly which subsystem is broken.
 
+## Controls
+
+These are also shown in-game: press **F1** or **H** (or the **?** button) at any time.
+
+| Key | Action |
+|---|---|
+| Left Mouse | Fire |
+| R | Reload |
+| Shift | Sprint |
+| E | Interact — open doors, use machines |
+| B | Re-open the shop during intermission |
+| 1 – 4 | Switch between owned weapons |
+| F1 / H | Toggle the how-to-play panel |
+
 ## Step 3 — What to actually test (in this order)
 
 | # | Check | What "working" looks like |
 |---|---|---|
-| 1 | **Map generated** | Walled arena with scattered cover crates and barrels, night fog. Not an empty baseplate. |
-| 2 | **HUD appears** | Health bar, ammo `12/120`, wave panel, coins — bottom/top corners. |
-| 3 | **Wave 1 starts** | After ~8s, zombies spawn from the ring and path toward you. Only Walkers. |
-| 4 | **Shooting works** | Left-click fires; crosshair kicks, muzzle flash, hitmarker on hit. Ammo counts down. |
-| 5 | **Reload** | Press `R`; ammo refills from reserve after the reload time. |
-| 6 | **Zombies damage you** | Health drops when they reach you; red vignette flashes. |
-| 7 | **Kill rewards** | Coins and XP tick up; `leaderstats` shows Coins/Wave. |
-| 8 | **Wave clears → shop** | On last kill, intermission starts (~20s) and the **shop opens** with weapons + perks. |
-| 9 | **Buy something** | Purchase a perk; your damage/speed visibly changes next wave. |
-| 10 | **Sprint** | Hold `Shift` — you move faster. |
-| 11 | **Death → game over** | Panel appears with RESPAWN (only if you bought Second Wind). |
-| 12 | **Boss wave** | Reach wave 5 — a large Abomination spawns. |
-| 13 | **Persistence** | Leave and rejoin: coins/XP/best wave are restored. |
+| 0 | **You can leave the spawn area** | You spawn in the parking lot at Lovisedalsskolan. Walk north through the open wing doorway into the schoolyard. If you are walled in, the map did not build correctly. |
+| 1 | **Map generated** | Red-brick school wings around a paved yard, benches and planters, a bike shelter, a playground, a football pitch with goals, a basketball court, a parking lot with cars, pine forest behind the fence, night fog. |
+| 2 | **Music plays** | An ambient drone on boot; it shifts to a driving combat track when a wave starts. |
+| 3 | **How-to-play panel** | Opens automatically a couple of seconds after you spawn; F1/H re-opens it. |
+| 4 | **HUD appears** | Health bar, ammo `12/120`, wave panel, coins — bottom/top corners. |
+| 5 | **Wave 1 starts** | After ~8s, zombies spawn from the tree line and path toward you in batches. |
+| 6 | **Shooting works** | Left-click fires; crosshair kicks, muzzle flash, hitmarker on hit. Ammo counts down. |
+| 7 | **Reload** | Press `R`; ammo refills from reserve after the reload time. |
+| 8 | **Weapon switch** | Press `1`–`4`; weapons you own swap without refilling reserve. |
+| 9 | **Zombies damage you** | Health drops when they reach you; red vignette flashes. |
+| 10 | **Kill rewards** | Coins and XP tick up; `leaderstats` shows Coins/Wave. |
+| 11 | **Wave clears → shop** | On last kill, intermission starts (~20s) and the **shop opens** with weapons + perks. |
+| 12 | **Buy something** | Purchase a perk; your damage/speed visibly changes next wave. |
+| 13 | **Sprint** | Hold `Shift` — you move faster. |
+| 14 | **Death → game over** | Panel appears with RESPAWN (only if you bought Second Wind). |
+| 15 | **Boss wave** | Reach wave 5 — a large Abomination spawns. |
+| 16 | **Persistence** | Leave and rejoin: coins/XP/best wave are restored. |
 
 ## Step 4 — Known risk areas
 

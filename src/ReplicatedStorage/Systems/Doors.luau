@@ -107,8 +107,24 @@ end
 -- Public API
 ----------------------------------------------------------------------
 
+-- Doors MapBuilder marked as already-open (the starting exit) are adopted on
+-- first use, so MaxReachableZone is correct from the moment the map exists.
+local function syncBuiltDoors()
+	local folder = doorsFolder()
+	if not folder then
+		return
+	end
+	for _, child in ipairs(folder:GetChildren()) do
+		local any: any = child
+		local index: number = tonumber(any:GetAttribute("DoorIndex")) or 0
+		if index > 0 and any:GetAttribute("Open") == true then
+			opened[index] = true
+		end
+	end
+end
+
 function Doors.Init()
-	-- Server: listen for door purchase requests from clients.
+	pcall(syncBuiltDoors)
 	pcall(function()
 		Remotes.RequestOpenDoor().OnServerEvent:Connect(function(player: Player, index: any)
 			local doorIndex: number = tonumber(index) or 0
@@ -137,7 +153,9 @@ function Doors.TryOpen(player: Player, index: number): (boolean, string?)
 	local any: any = door
 	local cost: number = tonumber(any:GetAttribute("Cost")) or Config.Map.DoorCost
 
-	if not spendCoins(player, cost) then
+	-- A zero-cost door is the starting exit: opening it must never be gated by
+	-- funds, or a brand-new player could be trapped in the spawn room.
+	if cost > 0 and not spendCoins(player, cost) then
 		return false, "InsufficientFunds"
 	end
 

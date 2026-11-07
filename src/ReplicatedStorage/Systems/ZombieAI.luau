@@ -502,6 +502,17 @@ end
 local REPATH_INTERVAL = 0.6
 local WAYPOINT_DISTANCE = 4
 
+-- How often a brain may retry pathfinding after a failure. A permanent
+-- PathFailed flag meant one bad ComputeAsync silenced navigation for the rest
+-- of that zombie's life; with dozens of rigid-part zombies spawning on cover
+-- this silently produced a field of statues. Allow periodic retries instead.
+local FAIL_RETRY_INTERVAL = 2.0
+
+-- Lunge tuning: within LUNGE_RANGE studs a zombie gains up to LUNGE_BONUS of
+-- extra move speed, ramping linearly as it gets closer.
+local LUNGE_RANGE = 22
+local LUNGE_BONUS = 0.45
+
 -- Recomputes the chase path. On any failure we set PathFailed so the brain
 -- falls back to direct MoveTo for the rest of its life (perf: no repeated
 -- doomed ComputeAsync calls every tick).
@@ -575,9 +586,22 @@ local function moveDirect(brain: Brain, goal: any)
 end
 
 local function chaseStep(brain: Brain, goal: any, now: number)
+	-- Recover from a previously failed path: the obstruction may have cleared
+	-- (explosive barrel gone, another zombie moved) so retry occasionally.
+	if brain.PathFailed and now >= (brain.NextRepathAt or 0) then
+		brain.PathFailed = false
+		brain.NextRepathAt = 0
+	end
+
 	if now >= brain.NextRepathAt then
 		brain.NextRepathAt = now + REPATH_INTERVAL
 		computePath(brain, goal)
+	end
+
+	-- If navigation just failed again, back off before retrying rather than
+	-- hammering ComputeAsync every frame, and fall through to direct MoveTo.
+	if brain.PathFailed then
+		brain.NextRepathAt = now + FAIL_RETRY_INTERVAL
 	end
 
 	local wps = brain.Waypoints
@@ -676,6 +700,28 @@ local function brainLoop(brain: Brain)
 		end
 
 		local now: number = toNumber(stepped, os.clock())
+		-- Lunge: zombies accelerate as they close on a target. This is what
+		-- turns "walk away and shoot" into real pressure — disengaging must
+		-- cost you, which is the core of the zombie-survival feel.
+		pcall(function()
+			local targetRoot = brain.Target
+			if not targetRoot or not brain.Root then
+				return
+			end
+			local rp: any = brain.Root.Position
+			local tp: any = targetRoot.Position
+			local dx: number = tp.X - rp.X
+			local dy: number = tp.Y - rp.Y
+			local dz: number = tp.Z - rp.Z
+			local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+			if dist < LUNGE_RANGE then
+				local t: number = 1 - (dist / LUNGE_RANGE)
+				brain.Humanoid.WalkSpeed = brain.WalkSpeed * (1 + LUNGE_BONUS * t)
+			else
+				brain.Humanoid.WalkSpeed = brain.WalkSpeed
+			end
+		end)
+
 		local goal = nearestTarget(brain)
 		if goal then
 			chaseStep(brain, goal.Position, now)

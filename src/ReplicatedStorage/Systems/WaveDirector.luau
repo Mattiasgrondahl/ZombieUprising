@@ -198,6 +198,31 @@ local function setPhase(phase: string)
 		state.Phase = phase
 	end
 	broadcast()
+
+	-- Music beds follow the phase: ambient while shopping, combat when a wave
+	-- is live, and a heavier cue on boss rounds. Driven from setPhase so every
+	-- transition is covered in exactly one place.
+	pcall(function()
+		local musicInst = script.Parent:FindFirstChild("Music")
+		if not musicInst then
+			return
+		end
+		local okM, mod = pcall(function()
+			return require(musicInst)
+		end)
+		if not okM or not mod or type((mod :: any).SetWavePhase) ~= "function" then
+			return
+		end
+		local mset: any = (mod :: any).SetWavePhase
+		local wave: number = state.Wave
+		local isBoss: boolean = phase == PHASE_ACTIVE and WaveDirector.IsBossWave(wave)
+		-- Spawn: a slow asset load must never stall the wave loop.
+		task.spawn(function()
+			pcall(function()
+				mset(mod, phase, wave, isBoss)
+			end)
+		end)
+	end)
 end
 
 ----------------------------------------------------------------------
@@ -384,7 +409,12 @@ local function spawnOne(waveNumber: number, archetypeId: string?, forceBoss: boo
 	local callSpawn: any = spawnFn
 	local model: any = nil
 	pcall(function()
-		model = callSpawn(callSpawn, id, waveNumber)
+		-- ZombieAI.Spawn is declared with dots, so it must be called WITHOUT a
+		-- self argument. Passing the function as `self` shifted every parameter
+		-- by one, so archetypeId received a function and archetypeOf() silently
+		-- fell back to Walker — every wave was cloned Walkers and Brutes,
+		-- Runners, Spitters and theme waves never appeared at all.
+		model = callSpawn(id, waveNumber)
 	end)
 	if model then
 		-- Special-wave scaling is derived deterministically inside ZombieAI

@@ -49,8 +49,13 @@ There is no Open Cloud REST API for publishing places (the v2 spec only exposes
   lifesteal, extra lives, and coin gain. Bought per-run between waves.
 - **Progression & persistence** — coins, XP, levels, `leaderstats`, a global OrderedDataStore
   leaderboard, and DataStore saves with retries and graceful in-memory fallback.
-- **Fully procedural arena** — seeded and deterministic: floor, walls, cover, explosive
-  barrels, spawn rings, and scripted night-time lighting/fog.
+- **Fully procedural school map** — seeded and deterministic. The arena is themed
+  from the aerial site plan of **Lovisedalsskolan, Vallentuna (Sweden)**: red-brick
+  school wings with flat roofs, a paved schoolyard with benches, planters, a bike
+  shelter and playground, a football pitch with goals and lines, a basketball
+  court, a parking lot with cars, and a pine forest behind a black yard fence.
+  Propane tanks keep the explosive-barrel hazard; night-time lighting/fog is
+  scripted via `MapBuilder.buildLighting`.
 
 All tuning lives in [`src/ReplicatedStorage/Shared/Config.luau`](src/ReplicatedStorage/Shared/Config.luau) —
 balance changes never require touching gameplay code.

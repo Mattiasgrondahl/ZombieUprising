@@ -94,6 +94,7 @@ local _doorsSystem: any = startSystem("Doors")
 local machinesSystem: any = startSystem("Machines")
 local _downedSystem: any = startSystem("Downed")
 local _badgesSystem: any = startSystem("Badges")
+local _musicSystem: any = startSystem("Music")
 
 -- Machines are physical objects, so place them once the map exists.
 do
@@ -201,18 +202,16 @@ local function onPlayerAdded(player: Player)
 
 		local hrp = character:WaitForChild("HumanoidRootPart", 10)
 		if hrp then
-			local okMB, center: any = pcall(function()
-				return require(ReplicatedStorage:WaitForChild("Systems"):WaitForChild("MapBuilder"))
-			end)
-			if not okMB then center = nil end
-			if center and type(center.GetCenterSpawn) == "function" then
-				local ok, pos = pcall(function()
-					return center.GetCenterSpawn()
-				end)
-				if ok and pos then
-					(hrp :: any).CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+			-- Place the player at the zone-1 spawn pad. This must never be the
+			-- geometric arena centre: interior boundary walls run through it.
+			local spawnPos: Vector3 = Vector3.new(0, 6, -Config.Map.ArenaSize / 2 + Config.Map.ZoneWidth / 2)
+			pcall(function()
+				if type(mapBuilderMod.GetPlayerSpawn) == "function" then
+					local fn: any = mapBuilderMod.GetPlayerSpawn
+					spawnPos = fn(mapBuilderMod)
 				end
-			end
+			end)
+			;(hrp :: any).CFrame = CFrame.new(spawnPos + Vector3.new(0, 5, 0))
 		end
 	end)
 

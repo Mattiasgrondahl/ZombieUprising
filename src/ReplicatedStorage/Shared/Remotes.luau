@@ -29,6 +29,7 @@ export type RemoteMap = {
 	RequestRespawn: RemoteEvent,
 	RequestOpenDoor: RemoteEvent,
 	RequestMachine: RemoteEvent,
+	RequestSwitchWeapon: RemoteEvent,
 
 	-- Server -> Client
 	WeaponStateChanged: RemoteEvent,
@@ -70,6 +71,7 @@ function Remotes.RequestPurchasePerk(): RemoteEvent return get("RequestPurchaseP
 function Remotes.RequestRespawn(): RemoteEvent return get("RequestRespawn") end
 function Remotes.RequestOpenDoor(): RemoteEvent return get("RequestOpenDoor") end
 function Remotes.RequestMachine(): RemoteEvent return get("RequestMachine") end
+function Remotes.RequestSwitchWeapon(): RemoteEvent return get("RequestSwitchWeapon") end
 
 function Remotes.WeaponStateChanged(): RemoteEvent return get("WeaponStateChanged") end
 function Remotes.PlayerStatsChanged(): RemoteEvent return get("PlayerStatsChanged") end
@@ -86,6 +88,7 @@ function Remotes.InitServer()
 		"RequestFire", "RequestReload", "RequestPurchaseWeapon", "RequestPurchasePerk", "RequestRespawn",
 		"RequestOpenDoor",
 		"RequestMachine",
+		"RequestSwitchWeapon",
 		"WeaponStateChanged", "PlayerStatsChanged", "WaveStateChanged", "DamageDealt",
 		"ZombieDamagedPlayer", "ShopStateChanged", "Notify", "RunEnded",
 	}) do

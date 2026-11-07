@@ -5,7 +5,38 @@
 local Config = {}
 
 Config.GameName = "Zombie Uprising"
-Config.Version = "1.0.0"
+Config.Version = "2.2.0"
+
+----------------------------------------------------------------------
+-- Audio
+--
+-- Roblox cannot synthesize waveforms from Luau, so music and SFX come from
+-- catalogue asset ids. Every id is Roblox-owned and long-lived. If any fails
+-- to load the Music/Audio system degrades silently rather than erroring.
+----------------------------------------------------------------------
+Config.Audio = {
+	Enabled = true,
+	MusicVolume = 0.35,
+	SFXVolume = 0.6,
+
+	-- Ambient drone looped from the moment the server boots.
+	AmbientMusicId = "rbxassetid://1843941676",  -- dark ambient drone
+	AmbientVolume = 0.22,
+
+	-- Combat music crossfades in when a wave goes active; tempo/pitch rises
+	-- with wave number so late waves feel more frantic.
+	WaveMusicId = "rbxassetid://9044416607",     -- tense combat loop
+	WaveMusicVolume = 0.30,
+	WavePitchBase = 1.0,
+	WavePitchPerWave = 0.01,
+	WavePitchMax = 1.35,
+
+	-- Boss waves get their own heavier cue.
+	BossMusicId = "rbxassetid://9125402737",
+	BossMusicVolume = 0.42,
+
+	MusicFadeTime = 1.8,
+}
 
 ----------------------------------------------------------------------
 -- Wave / match flow
@@ -14,7 +45,8 @@ Config.Wave = {
 	IntermissionTime = 20,      -- seconds of shop phase between waves
 	FirstWaveDelay = 8,
 	MaxConcurrentZombies = 60,  -- hard ceiling for perf safety
-	SpawnBatchInterval = 0.75,  -- stagger spawns within a wave
+	-- Faster batches: a swarm should pour in, not trickle one every 0.75s.
+	SpawnBatchInterval = 0.28,
 	BossEveryNWaves = 5,
 	-- Special wave types to break mid-game monotony.
 	-- RunnerWave: all-fast. SwarmWave: many weak. BruteWave: few tanky.
@@ -29,11 +61,14 @@ Config.Wave = {
 	BruteHealthMult = 1.8,
 	-- Extra zombies per additional player (sub-linear).
 	MultiplayerCountScale = 0.65,
-	BaseZombieCount = 6,
-	CountGrowthPerWave = 3.4,
-	HPScalePerWave = 1.09,
-	SpeedScalePerWave = 1.02,
-	MaxSpeedScale = 1.75,
+	BaseZombieCount = 8,
+	CountGrowthPerWave = 3.8,
+	-- Flattened from 1.18: geometric HP growth outran weapon damage so hard
+	-- that waves became mathematically unwinnable around wave 20. Many weak
+	-- zombies is the zombie-rouguelike feel; few tanky ones is a slog.
+	HPScalePerWave = 1.085,
+	SpeedScalePerWave = 1.015,
+	MaxSpeedScale = 1.55,
 	DamageScalePerWave = 1.05,
 }
 
@@ -45,7 +80,9 @@ Config.Player = {
 	BaseWalkSpeed = 16,
 	SprintSpeed = 24,
 	RespawnDelay = 5,
-	StartingCoins = 0,
+	-- Not zero: players must be able to afford the first door / perk without
+	-- a lucky early wave, otherwise a bad round one can stall the whole run.
+	StartingCoins = 150,
 	InvulnerabilityAfterSpawn = 3.0,
 	-- Health at/below which a player is knocked down instead of killed.
 	DownedThreshold = 1,
@@ -94,7 +131,10 @@ local Zombies: { [string]: ZombieArchetype } = {
 		Id = "Walker",
 		DisplayName = "Walker",
 		Health = 60,
-		WalkSpeed = 12,
+		-- Walkers must be faster than the player's WALK speed (16) or there is
+		-- no pressure to shoot: you could stroll away forever. They stay slower
+		-- than SPRINT (24) so escaping is possible but costs stamina/distance.
+		WalkSpeed = 18,
 		Damage = 12,
 		AttackRange = 4.5,
 		AttackCooldown = 1.2,
@@ -109,7 +149,8 @@ local Zombies: { [string]: ZombieArchetype } = {
 		Id = "Runner",
 		DisplayName = "Runner",
 		Health = 40,
-		WalkSpeed = 19,
+		-- Faster than the player's sprint: runners WILL catch you.
+		WalkSpeed = 27,
 		Damage = 9,
 		AttackRange = 4.0,
 		AttackCooldown = 0.8,
@@ -358,6 +399,10 @@ Config.Map = {
 	DoorCost = 400,           -- base cost; later doors cost more
 	DoorCostGrowth = 1.5,
 	DoorThickness = 3,
+
+	-- The arena is themed as a real school site (aerial model below).
+	SchoolName = "LOVISEDALSSKOLAN",
+	SchoolTown = "Vallentuna kommun",
 }
 
 -- Buyable progression: machines and utilities placed per zone.
