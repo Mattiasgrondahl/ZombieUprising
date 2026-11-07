@@ -6879,6 +6879,13 @@ end
 
 -- Server-side origin: derived from the character, never from the client, so a
 -- cheater cannot shoot from inside a wall or across the map.
+--
+-- The fallback aim direction is the HEAD's look vector. Note the previous
+-- version preferred workspace.CurrentCamera here — on the server that is not
+-- the player's camera (it is a detached default-pose camera), so every shot
+-- travelled along the character's body facing and the crosshair never lined up
+-- with the ray. The client's camera look direction now takes precedence
+-- (see extractAimDirection); this fallback only covers a bogus payload.
 local function serverOrigin(player: Player): (Vector3?, Vector3?)
 	local ok, res = pcall(function()
 		local character = player.Character
@@ -6889,14 +6896,7 @@ local function serverOrigin(player: Player): (Vector3?, Vector3?)
 		if not head then
 			return nil
 		end
-		local camera = workspace.CurrentCamera
-		local dir: any
-		if camera then
-			dir = camera.CFrame.LookVector
-		else
-			dir = head.CFrame.LookVector
-		end
-		return head.Position, dir
+		return head.Position, head.CFrame.LookVector
 	end)
 	if not ok or res == nil then
 		return nil, nil
@@ -7022,6 +7022,49 @@ local function isHeadshot(result: any): boolean
 		return true
 	end
 	return false
+end
+
+-- Extracts the aim direction from the (untrusted) fire payload.
+--
+-- The client sends ONE table argument: { AimPoint, Direction, Origin,
+-- CameraCFrame, WeaponId, SentAt }. The old handler expected positional
+-- arguments (aimPoint, clientDir), so clientDir was always nil and every shot
+-- reverted to the server fallback direction — the character's body facing —
+-- which is why the gun could never reliably kill zombies.
+--
+-- `Direction` is the client's (aimPoint - cameraOrigin) vector and is NOT
+-- normalized, so it is unit-normalized here: MathUtil.ApplySpread adds
+-- orthogonal*sin(angle) offsets scaled for a unit vector, and a 250-stud raw
+-- vector collapsed the shotgun's spread to near zero.
+--
+-- Returns a unit Vector3, or nil when the payload carries nothing usable.
+local function extractAimDirection(payload: any, originPos: Vector3): Vector3?
+	if typeof(payload) ~= "table" then
+		return nil
+	end
+	local view: any = payload
+
+	local dx, dy, dz = sanitizeVec(view.Direction)
+	local mag = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if mag >= 0.05 then
+		return Vector3.new(dx / mag, dy / mag, dz / mag)
+	end
+
+	-- Fall back to deriving a direction from the world aim point against the
+	-- server-side origin. Never trusted as an origin itself.
+	local ax, ay, az = sanitizeVec(view.AimPoint)
+	local originAny: any = originPos
+	if ax ~= 0 or ay ~= 0 or az ~= 0 then
+		local vx: number = ax - originAny.X
+		local vy: number = ay - originAny.Y
+		local vz: number = az - originAny.Z
+		local vmag = math.sqrt(vx * vx + vy * vy + vz * vz)
+		if vmag >= 1.0 then
+			return Vector3.new(vx / vmag, vy / vmag, vz / vmag)
+		end
+	end
+
+	return nil
 end
 
 -- Returns the zombie Model for a hit part, or nil if it is not a zombie.
@@ -7208,7 +7251,7 @@ local function bulletRand(player: Player): (number, number) -> number
 	end
 end
 
-local function tryFire(player: Player)
+local function tryFire(player: Player, firePayload: any)
 	-- Rate limit first; everything else is cheaper than an exploit.
 	if not withinRateLimit(player) then
 		return
@@ -7244,10 +7287,15 @@ local function tryFire(player: Player)
 		return
 	end
 
-	local originPos, dir = serverOrigin(player)
-	if originPos == nil or dir == nil then
+	local originPos, fallbackDir = serverOrigin(player)
+	if originPos == nil or fallbackDir == nil then
 		return
 	end
+
+	-- Aim where the player is looking (camera direction from the client
+	-- payload), not where the character's body happens to face. Falls back to
+	-- the head look vector when the payload is absent or malformed.
+	local dir: Vector3 = extractAimDirection(firePayload, originPos) or fallbackDir :: Vector3
 
 	entry.AmmoInMag -= 1
 	entry.LastFireTime = now
@@ -7324,11 +7372,11 @@ function Weapons.Init()
 		fireWindows[player] = nil
 	end)
 
-	-- Client -> Server. `aimPoint`/`clientDir` arrive untrusted; we use them
-	-- only when they are sane, and always raycast from the server-side origin.
-	Remotes.RequestFire().OnServerEvent:Connect(function(player: Player, _aimPoint: any, clientDir: any)
-		local _x, _y, _z = sanitizeVec(clientDir)
-		tryFire(player)
+	-- Client -> Server. The client sends a single payload table; it arrives
+	-- untrusted and we only take the aim direction from it (unit-normalized in
+	-- extractAimDirection). The origin is always re-derived server-side.
+	Remotes.RequestFire().OnServerEvent:Connect(function(player: Player, firePayload: any)
+		tryFire(player, firePayload)
 	end)
 
 	Remotes.RequestReload().OnServerEvent:Connect(function(player: Player)
@@ -8308,18 +8356,10 @@ function ZombieAI.Damage(zombieModel: any, amount: number, headshot: boolean?): 
 		end
 	end)
 
-	-- Fire the hit feedback remote inside pcall so networking issues can never
-	-- break combat. Payload is deliberately loose for the floating-text client.
-	pcall(function()
-		local pos: any = brain.Root.Position
-		Remotes.DamageDealt():FireAllClients(
-			brain.ZombieId,
-			dmg,
-			headshot == true,
-			brain.Health,
-			pos
-		)
-	end)
+	-- Hit feedback: Weapons.luau owns the DamageDealt remote (it fires a
+	-- well-formed payload to the shooter). This module previously broadcast
+	-- positional arguments (ZombieId, dmg, ...) that the client's table-based
+	-- handler could not parse and that duplicated the shooter's hitmarker.
 
 	if brain.Health <= 0 then
 		if brain.Alive then

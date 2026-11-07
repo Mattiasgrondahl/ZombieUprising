@@ -936,18 +936,10 @@ function ZombieAI.Damage(zombieModel: any, amount: number, headshot: boolean?): 
 		end
 	end)
 
-	-- Fire the hit feedback remote inside pcall so networking issues can never
-	-- break combat. Payload is deliberately loose for the floating-text client.
-	pcall(function()
-		local pos: any = brain.Root.Position
-		Remotes.DamageDealt():FireAllClients(
-			brain.ZombieId,
-			dmg,
-			headshot == true,
-			brain.Health,
-			pos
-		)
-	end)
+	-- Hit feedback: Weapons.luau owns the DamageDealt remote (it fires a
+	-- well-formed payload to the shooter). This module previously broadcast
+	-- positional arguments (ZombieId, dmg, ...) that the client's table-based
+	-- handler could not parse and that duplicated the shooter's hitmarker.
 
 	if brain.Health <= 0 then
 		if brain.Alive then
