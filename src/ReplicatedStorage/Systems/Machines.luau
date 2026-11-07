@@ -209,10 +209,11 @@ function Machines.Build()
 		return -half + width * (z - 1) + width / 2
 	end
 
-	-- Power switch in zone 2; everything else needs power.
+	-- Power switch in zone 2 (yard east of the school road bend);
+	-- everything else needs power.
 	makeMachine({
 		Name = "PowerSwitch",
-		Position = Vector3.new(-34, 4, zoneCenter(2)),
+		Position = Vector3.new(10, 4, zoneCenter(2)),
 		Color = Color3.fromRGB(240, 220, 90),
 		Label = "POWER  (free)",
 		Zone = 2,
@@ -221,21 +222,21 @@ function Machines.Build()
 	-- Perk machines spread across zones (CoD-style names).
 	makeMachine({
 		Name = "Juggernog",
-		Position = Vector3.new(30, 4, zoneCenter(2)),
+		Position = Vector3.new(-85, 4, zoneCenter(2) + 12),
 		Color = Color3.fromRGB(200, 60, 60),
 		Label = "Juggernog — Max Health",
 		Zone = 2,
 	})
 	makeMachine({
 		Name = "SpeedCola",
-		Position = Vector3.new(-34, 4, zoneCenter(3)),
+		Position = Vector3.new(20, 4, zoneCenter(3)),
 		Color = Color3.fromRGB(80, 200, 120),
 		Label = "Speed Cola — Reload",
 		Zone = 3,
 	})
 	makeMachine({
 		Name = "DoubleTap",
-		Position = Vector3.new(34, 4, zoneCenter(3)),
+		Position = Vector3.new(-42, 4, zoneCenter(3) + 20),
 		Color = Color3.fromRGB(220, 140, 60),
 		Label = "Double Tap — Fire Rate",
 		Zone = 3,
@@ -244,14 +245,14 @@ function Machines.Build()
 	-- Mystery box in zone 2, Pack-a-Punch deep in zone 4.
 	makeMachine({
 		Name = "MysteryBox",
-		Position = Vector3.new(0, 4, zoneCenter(2)),
+		Position = Vector3.new(-64, 4, zoneCenter(2) + 12),
 		Color = Color3.fromRGB(160, 90, 200),
 		Label = string.format("Mystery Box — %d", P.MysteryBoxCost),
 		Zone = 2,
 	})
 	makeMachine({
 		Name = "PackAPunch",
-		Position = Vector3.new(0, 4, zoneCenter(4)),
+		Position = Vector3.new(-6, 4, zoneCenter(4)),
 		Color = Color3.fromRGB(90, 160, 240),
 		Label = string.format("Pack-a-Punch — %d", P.PackAPunchCost),
 		Zone = 4,
@@ -260,14 +261,14 @@ function Machines.Build()
 	-- Traps guarding chokepoints in zones 3 and 4.
 	makeMachine({
 		Name = "Trap_3",
-		Position = Vector3.new(-20, 4, zoneCenter(3)),
+		Position = Vector3.new(8, 4, zoneCenter(3) - 20),
 		Color = Color3.fromRGB(230, 80, 220),
 		Label = string.format("Trap — %d", P.TrapCost),
 		Zone = 3,
 	})
 	makeMachine({
 		Name = "Trap_4",
-		Position = Vector3.new(20, 4, zoneCenter(4)),
+		Position = Vector3.new(-30, 4, zoneCenter(4) - 6),
 		Color = Color3.fromRGB(230, 80, 220),
 		Label = string.format("Trap — %d", P.TrapCost),
 		Zone = 4,

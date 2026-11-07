@@ -2827,10 +2827,11 @@ function Machines.Build()
 		return -half + width * (z - 1) + width / 2
 	end
 
-	-- Power switch in zone 2; everything else needs power.
+	-- Power switch in zone 2 (yard east of the school road bend);
+	-- everything else needs power.
 	makeMachine({
 		Name = "PowerSwitch",
-		Position = Vector3.new(-34, 4, zoneCenter(2)),
+		Position = Vector3.new(10, 4, zoneCenter(2)),
 		Color = Color3.fromRGB(240, 220, 90),
 		Label = "POWER  (free)",
 		Zone = 2,
@@ -2839,21 +2840,21 @@ function Machines.Build()
 	-- Perk machines spread across zones (CoD-style names).
 	makeMachine({
 		Name = "Juggernog",
-		Position = Vector3.new(30, 4, zoneCenter(2)),
+		Position = Vector3.new(-85, 4, zoneCenter(2) + 12),
 		Color = Color3.fromRGB(200, 60, 60),
 		Label = "Juggernog — Max Health",
 		Zone = 2,
 	})
 	makeMachine({
 		Name = "SpeedCola",
-		Position = Vector3.new(-34, 4, zoneCenter(3)),
+		Position = Vector3.new(20, 4, zoneCenter(3)),
 		Color = Color3.fromRGB(80, 200, 120),
 		Label = "Speed Cola — Reload",
 		Zone = 3,
 	})
 	makeMachine({
 		Name = "DoubleTap",
-		Position = Vector3.new(34, 4, zoneCenter(3)),
+		Position = Vector3.new(-42, 4, zoneCenter(3) + 20),
 		Color = Color3.fromRGB(220, 140, 60),
 		Label = "Double Tap — Fire Rate",
 		Zone = 3,
@@ -2862,14 +2863,14 @@ function Machines.Build()
 	-- Mystery box in zone 2, Pack-a-Punch deep in zone 4.
 	makeMachine({
 		Name = "MysteryBox",
-		Position = Vector3.new(0, 4, zoneCenter(2)),
+		Position = Vector3.new(-64, 4, zoneCenter(2) + 12),
 		Color = Color3.fromRGB(160, 90, 200),
 		Label = string.format("Mystery Box — %d", P.MysteryBoxCost),
 		Zone = 2,
 	})
 	makeMachine({
 		Name = "PackAPunch",
-		Position = Vector3.new(0, 4, zoneCenter(4)),
+		Position = Vector3.new(-6, 4, zoneCenter(4)),
 		Color = Color3.fromRGB(90, 160, 240),
 		Label = string.format("Pack-a-Punch — %d", P.PackAPunchCost),
 		Zone = 4,
@@ -2878,14 +2879,14 @@ function Machines.Build()
 	-- Traps guarding chokepoints in zones 3 and 4.
 	makeMachine({
 		Name = "Trap_3",
-		Position = Vector3.new(-20, 4, zoneCenter(3)),
+		Position = Vector3.new(8, 4, zoneCenter(3) - 20),
 		Color = Color3.fromRGB(230, 80, 220),
 		Label = string.format("Trap — %d", P.TrapCost),
 		Zone = 3,
 	})
 	makeMachine({
 		Name = "Trap_4",
-		Position = Vector3.new(20, 4, zoneCenter(4)),
+		Position = Vector3.new(-30, 4, zoneCenter(4) - 6),
 		Color = Color3.fromRGB(230, 80, 220),
 		Label = string.format("Trap — %d", P.TrapCost),
 		Zone = 4,
@@ -3141,31 +3142,38 @@ return Machines
           <string name="Source"><![CDATA[--!strict
 -- Procedurally generates the map at runtime: Lovisedalsskolan, Vallentuna.
 --
--- Layout is modelled on the aerial site plan of the real school:
---   * red-brick school wings with dark (one white) roofs around a paved yard
---   * grey paving-stone schoolyard with benches, planters and a playground
---   * forest-turf football pitch with goals and lines on the east side
---   * asphalt parking lot with white stalls and cars to the south (spawn)
---   * basketball court west of the yard
---   * a ring of pine forest outside a low black fence (Vallentuna is pine
---     forest), with the boundary itself made of invisible walls so the world
---     reads as "fenced school grounds" instead of a walled arena
+-- The layout is a one-to-one transcription of the aerial site plan:
+--   * the main school buildings form an H — two long wings (west bar and
+--     east bar) joined by a north cross-wing with two raised corner blocks,
+--     a storage bridge, and an L-shaped south wing whose western end drops
+--     into a long narrow tail running south
+--   * the school road arrives from the north park, runs straight south down
+--     the school's east side, dog-legs east around the south wing, turns
+--     south beside the sports hall and bends east to the south-east fence,
+--     with a minor branch dropping south through the south lawn
+--   * a drivers' entrance road cuts east-west across the north lawn and dies
+--     in a stub apron near the basketball court
+--   * the football pitch sits east of the buildings on the pale field, the
+--     basketball court on the north lawn, the sports hall (idrottshall) on
+--     the south-east corner, small outbuildings and villa houses round the
+--     forest edges
+--   * forest (pines) wraps the west, north-east notch and south corners
+--   * a small octagonal kiosk stands in the paved inner quadrangle
 --
--- The four-zone progression and buyable doors are preserved: interior
--- boundaries are styled as additional brick building wings with a door gap,
--- which the real site reads as buildings anyway. Zone 1 (parking + arrival
--- yard) is where players spawn; the free first exit leads north into the
--- school wings.
---
--- Geometry is driven by a fixed seed (Config.Map.Seed) so every build produces
--- identical geometry. Zero external assets are required.
+-- Progression zones and buyable doors survive unchanged: the interior
+-- boundary lines are drawn as the site's own black yard fences, and each
+-- door gap is placed exactly where the school site has a real passage —
+-- the gate between the south wing and the sports-hall forecourt, the gate
+-- across the school road, and the gate where the road leaves the north
+-- park. All geometry is fixed (Config.Map.Seed) so builds are identical.
+-- No external assets are required.
 
 local Config = require(script.Parent.Parent.Shared.Config)
 local RNG = require(script.Parent.Parent.Shared.RNG)
 
--- Structural mirror of RNG.Random. The offline analyzer cannot resolve exported
--- types across `require`, so we redeclare the shape locally (kept in sync with
--- Shared/RNG.luau). This is a lint-time alias only; the runtime value is real.
+-- Structural mirror of RNG.Random. The offline analyzer cannot resolve
+-- exported types across `require`, so we redeclare the shape locally (kept
+-- in sync with Shared/RNG.luau).
 type Random = {
 	Next: (any) -> number,
 	Range: (any, number, number) -> number,
@@ -3201,31 +3209,32 @@ local function mapSettings(): MapSettings
 end
 
 ----------------------------------------------------------------------
--- Palette (matched to the school photos: red brick, black fascia, grey yard)
+-- Palette (matched to the photos: red brick, white hall, grey yard)
 ----------------------------------------------------------------------
 
 local COL_BRICK = Color3.fromRGB(150, 78, 58)      -- photo red brick
 local COL_FASCIA = Color3.fromRGB(28, 30, 36)      -- black roof fascia / trim
-local COL_ROOF = Color3.fromRGB(34, 36, 46)        -- dark navy flat roofs
+local COL_ROOF = Color3.fromRGB(34, 36, 46)        -- dark flat roofs
 local COL_ROOF_WHITE = Color3.fromRGB(216, 218, 222)
+local COL_WALL_WHITE = Color3.fromRGB(226, 226, 224)
 local COL_METAL_DARK = Color3.fromRGB(96, 102, 112)
-local COL_PAVE = Color3.fromRGB(146, 146, 152)     -- yard paving stones
-local COL_PAVE_DARK = Color3.fromRGB(126, 126, 134) -- paving seams
+local COL_LAWN = Color3.fromRGB(168, 176, 148)     -- pale school-grounds lawn
 local COL_GRASS = Color3.fromRGB(76, 98, 60)       -- pine-forest grass
+local COL_FOREST_PIER = Color3.fromRGB(114, 118, 88) -- tree-pierced edge grass
 local COL_TURF = Color3.fromRGB(30, 124, 58)       -- artificial pitch turf
 local COL_ASPHALT = Color3.fromRGB(56, 58, 63)
 local COL_WOOD = Color3.fromRGB(146, 90, 56)       -- photobench red-brown wood
-local COL_METAL = Color3.fromRGB(120, 124, 132)    -- bench frames / racks
+local COL_METAL = Color3.fromRGB(120, 124, 132)    -- bench frames
 local COL_FENCE = Color3.fromRGB(40, 42, 46)       -- black yard fence
 local COL_PINE = Color3.fromRGB(36, 72, 42)
 local COL_TRUNK = Color3.fromRGB(86, 62, 44)
+local COL_LEAF = Color3.fromRGB(72, 104, 52)       -- yard birch foliage
 local COL_GLASS = Color3.fromRGB(38, 52, 66)
 local COL_WHITE = Color3.fromRGB(235, 236, 238)
-local COL_SAND = Color3.fromRGB(196, 176, 140)
 local COL_FLAG_BLUE = Color3.fromRGB(0, 106, 167)
 local COL_FLAG_YELLOW = Color3.fromRGB(254, 198, 0)
+local COL_SHED = Color3.fromRGB(232, 231, 226)     -- white bike shelter
 
--- Interior zone boundaries are built as brick wings at school scale.
 local WING_WALL_HEIGHT = 16
 local WING_ROOF_HEIGHT = 2
 local DOOR_HEIGHT = WING_WALL_HEIGHT + WING_ROOF_HEIGHT -- 18
@@ -3254,255 +3263,382 @@ local function ensureRoot(): Folder
 	return root
 end
 
-----------------------------------------------------------------------
--- Ground: pine-forest base, paved yard, parking, paths
-----------------------------------------------------------------------
-
-local function buildSite(root: Folder, _m: MapSettings)
-	-- Forest floor across the whole site.
-	local ground = newPart({
-		Name = "Site_Ground",
-		Size = Vector3.new(260, 4, 260),
-		Position = Vector3.new(0, -2, 0),
-		Material = Enum.Material.Grass,
-		Color = COL_GRASS,
+-- Flat ground slab laid at a slight height offset so stacked surfaces never
+-- z-fight against each other.
+local function addSlab(
+	root: Folder,
+	name: string,
+	xCenter: number,
+	zCenter: number,
+	xSize: number,
+	zSize: number,
+	yTop: number,
+	material: any,
+	color: Color3,
+	thickness: number?
+)
+	local p = newPart({
+		Name = name,
+		Size = Vector3.new(xSize, thickness or 0.3, zSize),
+		Position = Vector3.new(xCenter, yTop - (thickness or 0.3) / 2, zCenter),
+		Material = material,
+		Color = color,
 	})
-	ground.Parent = root
-
-	-- The paved schoolyard between the buildings (the photo's grey tile).
-	local yard = newPart({
-		Name = "SchoolYard",
-		Size = Vector3.new(190, 0.4, 122),
-		Position = Vector3.new(-20, 0.2, -9),
-		Material = Enum.Material.Concrete,
-		Color = COL_PAVE,
-	})
-	yard.Parent = root
-
-	-- Paving seams so the slab reads as paving stones, not one grey plane.
-	for i = 0, 11 do
-		local x = -107 + i * 16
-		local seam = newPart({
-			Name = "YardSeam_X" .. tostring(i),
-			Size = Vector3.new(0.6, 0.05, 122),
-			Position = Vector3.new(x, 0.41, -9),
-			Material = Enum.Material.Concrete,
-			Color = COL_PAVE_DARK,
-			CanCollide = false,
-		})
-		seam.Parent = root
-	end
-	for i = 0, 6 do
-		local z = -62 + i * 16
-		local seam = newPart({
-			Name = "YardSeam_Z" .. tostring(i),
-			Size = Vector3.new(190, 0.05, 0.6),
-			Position = Vector3.new(-20, 0.41, z),
-			Material = Enum.Material.Concrete,
-			Color = COL_PAVE_DARK,
-			CanCollide = false,
-		})
-		seam.Parent = root
-	end
-
-	-- Parking asphalt (south, zone 1).
-	local parking = newPart({
-		Name = "ParkingLot",
-		Size = Vector3.new(100, 0.4, 47),
-		Position = Vector3.new(10, 0.2, -101.5),
-		Material = Enum.Material.Asphalt,
-		Color = COL_ASPHALT,
-	})
-	parking.Parent = root
-
-	-- Drive/park path from the lot to the arrival area.
-	local path = newPart({
-		Name = "ParkingPath",
-		Size = Vector3.new(60, 0.3, 8),
-		Position = Vector3.new(10, 0.35, -74),
-		Material = Enum.Material.Asphalt,
-		Color = COL_ASPHALT,
-	})
-	path.Parent = root
-
-	-- Football-pitch turf (east, zone 4).
-	local turf = newPart({
-		Name = "PitchTurf",
-		Size = Vector3.new(94, 0.4, 48),
-		Position = Vector3.new(70, 0.2, 100),
-		Material = Enum.Material.Grass,
-		Color = COL_TURF,
-	})
-	turf.Parent = root
+	p.Parent = root
+	return p
 end
 
 ----------------------------------------------------------------------
--- School buildings: brick blocks with roofs, windows, entrance canopy
+-- Ground: forest floor, school lawn, field, paddings
 ----------------------------------------------------------------------
 
--- One school wing: solid block + overhanging flat roof + window bands.
-local function addBuilding(root: Folder, cfg: {
-	Name: string,
-	Center: Vector3,
-	Size: Vector3,
-	RoofColor: Color3,
-	Windows: { { face: string, positions: { number }, y: number, size: Vector3, side: number? } }?,
-})
+local function buildTerrain(root: Folder)
+	-- Dark pine-forest base filling the world outside the fence.
+	local base = newPart({
+		Name = "Site_ForestBase",
+		Size = Vector3.new(360, 4, 360),
+		Position = Vector3.new(0, -2.3, 0),
+		Material = Enum.Material.Grass,
+		Color = COL_GRASS,
+	})
+	base.Parent = root
+
+	-- Pale school-grounds lawn inside the fence (the aerial's light grounds).
+	local lawn = addSlab(root, "Site_Lawn", 0, 0, 262, 262, 0.02, Enum.Material.Grass, COL_LAWN)
+	lawn.Material = Enum.Material.Grass
+
+	-- Open field east of the school (pale grass around the football pitch).
+	addSlab(root, "FieldGrass", 66, -31, 124, 95, 0.05, Enum.Material.Grass, Color3.fromRGB(184, 188, 150))
+
+	-- Forest patches drawn over the lawn, matching the aerial's green areas:
+	-- deep south-west corner, north-west corner villas, north-east notch,
+	-- south-east corner strip.
+	addSlab(root, "Forest_SW_N", -104, -101, 62, 84, 0.05, Enum.Material.Grass, COL_FOREST_PIER)
+	addSlab(root, "Forest_SW_S", -76, -149, 96, 74, 0.05, Enum.Material.Grass, COL_FOREST_PIER)
+	addSlab(root, "Forest_NE_A", 66, 52, 77, 62, 0.05, Enum.Material.Grass, COL_FOREST_PIER)
+	local neMain = newPart({
+		Name = "Forest_NE_B",
+		Size = Vector3.new(112, 0.3, 90),
+		Position = Vector3.new(77, -0.1, 63),
+		Material = Enum.Material.Grass,
+		Color = COL_FOREST_PIER,
+	})
+	neMain.CFrame = CFrame.fromMatrix(
+		Vector3.new(76, -0.15, 62),
+		Vector3.new(0.933, 0, 0.36),
+		Vector3.new(0, 1, 0))
+	neMain.Parent = root
+	addSlab(root, "Forest_NW", -132, 58, 74, 88, 0.05, Enum.Material.Grass, COL_FOREST_PIER)
+	addSlab(root, "Forest_SE", 112, -138, 74, 106, 0.05, Enum.Material.Grass, COL_FOREST_PIER)
+end
+
+----------------------------------------------------------------------
+-- School building complex: the H-shaped school
+----------------------------------------------------------------------
+
+-- One school wing: solid block + overhanging flat roof + fascia trim.
+local function addBuilding(
+	root: Folder,
+	name: string,
+	xCenter: number,
+	zCenter: number,
+	xSize: number,
+	zSize: number,
+	wallHeight: number,
+	roofColor: Color3,
+	wallColor: Color3?
+)
 	local block = newPart({
-		Name = cfg.Name,
-		Size = cfg.Size,
-		Position = cfg.Center,
+		Name = name,
+		Size = Vector3.new(xSize, wallHeight, zSize),
+		Position = Vector3.new(xCenter, wallHeight / 2, zCenter),
 		Material = Enum.Material.Brick,
-		Color = COL_BRICK,
+		Color = wallColor or COL_BRICK,
 	})
 	block.Parent = root
-
-	local roof = newPart({
-		Name = cfg.Name .. "_Roof",
-		Size = Vector3.new(cfg.Size.X + 6, 2, cfg.Size.Z + 6),
-		Position = Vector3.new(cfg.Center.X, cfg.Center.Y + cfg.Size.Y / 2 + 1, cfg.Center.Z),
-		Material = Enum.Material.Slate,
-		Color = COL_ROOF,
-	})
-	-- Dark fascia trim between wall and roof, like the photos.
 	local fascia = newPart({
-		Name = cfg.Name .. "_Fascia",
-		Size = Vector3.new(cfg.Size.X + 6.4, 1.2, cfg.Size.Z + 6.4),
-		Position = Vector3.new(cfg.Center.X, cfg.Center.Y + cfg.Size.Y / 2 + 0.2, cfg.Center.Z),
+		Name = name .. "_Fascia",
+		Size = Vector3.new(xSize + 1.2, 1.2, zSize + 1.2),
+		Position = Vector3.new(xCenter, wallHeight + 0.2, zCenter),
 		Material = Enum.Material.Metal,
 		Color = COL_FASCIA,
 		CanCollide = false,
 	})
-	roof.Color = cfg.RoofColor
-	roof.Parent = root
 	fascia.Parent = root
+	local roof = newPart({
+		Name = name .. "_Roof",
+		Size = Vector3.new(xSize + 1.2, 1.6, zSize + 1.2),
+		Position = Vector3.new(xCenter, wallHeight + 1.4, zCenter),
+		Material = Enum.Material.Slate,
+		Color = roofColor,
+	})
+	roof.Parent = root
+end
 
-	if cfg.Windows then
-		for _, band in ipairs(cfg.Windows) do
-			local sideNum: number = band.side or 1
-			for _, a in ipairs(band.positions) do
-				local pos: Vector3
-				if band.face == "X" then
-					pos = Vector3.new(
-						cfg.Center.X + sideNum * (cfg.Size.X / 2 + 0.05),
-						band.y,
-						a)
-				else
-					pos = Vector3.new(
-						a,
-						band.y,
-						cfg.Center.Z + sideNum * (cfg.Size.Z / 2 + 0.05))
-				end
-				local isXFace = band.face == "X"
-				local w = newPart({
-					Name = "Window",
-					Size = if isXFace
-						then Vector3.new(0.4, band.size.Y, band.size.X)
-						else Vector3.new(band.size.X, band.size.Y, 0.4),
-					Position = pos,
-					Material = Enum.Material.Glass,
-					Color = COL_GLASS,
-					Reflectance = 0.15,
-					CanCollide = false,
-				})
-				w.Parent = root
-			end
+-- Window band: a line of glass panes sunk into one face of a wing.
+local function addWindowBand(
+	root: Folder,
+	name: string,
+	axis: string,            -- "X" (band runs along X, pane on ±Z face) | "Z"
+	xCenter: number,
+	zCenter: number,
+	xSize: number,
+	zSize: number,
+	yPane: number,
+	sides: { number }
+)
+	for _, side in ipairs(sides) do
+		local pos, size
+		if axis == "X" then
+			pos = Vector3.new(xCenter, yPane, zCenter + side * (zSize / 2 + 0.05))
+			size = Vector3.new(xSize, 5.2, 0.35)
+		else
+			pos = Vector3.new(xCenter + side * (xSize / 2 + 0.05), yPane, zCenter)
+			size = Vector3.new(0.35, 5.2, zSize)
 		end
+		local w = newPart({
+			Name = name,
+			Size = size,
+			Position = pos,
+			Material = Enum.Material.Glass,
+			Color = COL_GLASS,
+			Reflectance = 0.15,
+			CanCollide = false,
+		})
+		w.Parent = root
 	end
 end
 
-local function buildBuildings(root: Folder)
-	-- Zone 2 — classroom wing A (west long wing). Windows on the yard-facing
-	-- (south, +Z) face and on the east end facing the open playground side.
-	addBuilding(root, {
-		Name = "WingA_Classrooms",
-		Center = Vector3.new(-78, 11, -41.5),
-		Size = Vector3.new(60, 22, 33),
-		RoofColor = COL_ROOF,
-		Windows = {
-			{ face = "Z", positions = { -100, -89, -67, -56 }, y = 9, size = Vector3.new(6, 5, 0), side = 1 },
-			{ face = "X", positions = { -52, -42, -32 }, y = 9, size = Vector3.new(6, 5, 0), side = 1 },
-		},
-	})
-	-- Entrance canopy facing the yard.
+local function buildSchool(root: Folder)
+	-- WEST BAR — long two-storey classroom wing (left leg of the H).
+	addBuilding(root, "Wing_WestBar", -85, 8, 24, 43, WING_WALL_HEIGHT, COL_ROOF_WHITE)
+	addWindowBand(root, "Window", "X", -85, 8, 16, 43, 9, { 1 })
+	addWindowBand(root, "Window", "X", -85, 8, 16, 43, 3.5, { 1 })
+
+	-- NORTH CROSS-WING — the H crossbar; its pale band roof reads bright
+	-- from above like the photo's white roof stripe.
+	addBuilding(root, "Wing_NorthCross", -51, 20, 90, 18, WING_WALL_HEIGHT, COL_ROOF_WHITE)
+	addWindowBand(root, "Window", "X", -51, 20, 80, 18, 4.5, { -1 })
+
+	-- Raised corner blocks on the cross-wing (the two taller north gables).
+	addBuilding(root, "Wing_NorthWestGable", -75, 38, 20, 18, 21, COL_ROOF)
+	addBuilding(root, "Wing_NorthEastGable", -22, 38, 35, 18, 21, COL_ROOF)
+	addWindowBand(root, "Window", "X", -22, 38, 26, 18, 5, { 1 })
+
+	-- EAST BAR — right leg of the H, running south from the cross-wing to
+	-- the south wing shoulder.
+	addBuilding(root, "Wing_EastBar", -21.5, -12.5, 31, 81, WING_WALL_HEIGHT, COL_ROOF)
+	addWindowBand(root, "Window", "X", -21.5, -12.5, 22, 81, 9, { 1 })
+	addWindowBand(root, "Window", "X", -21.5, -12.5, 22, 81, 3.5, { 1 })
+
+	-- SOUTH WING — long cafeteria/kitchen wing along the yard's south edge,
+	-- carrying the school name sign on its north face (the aerial pin).
+	addBuilding(root, "Wing_SouthWing", 4.3, -66.5, 82.6, 23, WING_WALL_HEIGHT, COL_ROOF_WHITE)
+	addWindowBand(root, "Window", "X", 4.3, -66.5, 70, 23, 4.5, { 1 })
+
+	-- SOUTH TAIL — narrow service/store wing dropping south from the
+	-- south wing's west end (the angled tail on the aerial).
+	addBuilding(root, "Wing_SouthTail", -24, -92, 23, 42, 11, COL_ROOF)
+
+	-- Entrance canopy + main doors on the south wing's north face, roughly
+	-- where the aerial drops its school pin.
 	local canopy = newPart({
-		Name = "WingA_Canopy",
-		Size = Vector3.new(10, 0.8, 6),
-		Position = Vector3.new(-78, 9.5, -22.5),
+		Name = "Wing_SouthWing_Canopy",
+		Size = Vector3.new(12, 0.8, 7),
+		Position = Vector3.new(10, 9.8, -58.5),
 		Material = Enum.Material.Metal,
 		Color = COL_FASCIA,
 	})
 	canopy.Parent = root
-	local doorPair = newPart({
-		Name = "WingA_Doors",
-		Size = Vector3.new(6, 6, 0.5),
-		Position = Vector3.new(-78, 3.4, -25.1),
+	local doors = newPart({
+		Name = "Wing_SouthWing_Doors",
+		Size = Vector3.new(8, 7, 0.5),
+		Position = Vector3.new(10, 3.9, -55.2),
 		Material = Enum.Material.Glass,
 		Color = COL_GLASS,
 		CanCollide = false,
 	})
-	doorPair.Parent = root
+	doors.Parent = root
 
-	-- Zone 2 — annex wing B with the white roof. Pushed north of the yard gap
-	-- so the MysteryBox machine pad (x 0, z -32.5) stays clear of its footprint.
-	addBuilding(root, {
-		Name = "WingB_Annex",
-		Center = Vector3.new(0, 8, -46),
-		Size = Vector3.new(40, 16, 16),
-		RoofColor = COL_ROOF_WHITE,
-		Windows = {
-			{ face = "Z", positions = { -16, -6, 6, 16 }, y = 7, size = Vector3.new(5, 4, 0), side = 1 },
-		},
+	-- Bike shelter (white, open-sided) north of the cross-wing as per photo.
+	for _, off in ipairs({
+		Vector3.new(-4, 0, -3.2), Vector3.new(4, 0, -3.2),
+		Vector3.new(-4, 0, 3.2), Vector3.new(4, 0, 3.2),
+	}) do
+		local post = newPart({
+			Name = "ShelterPost",
+			Size = Vector3.new(0.5, 4.2, 0.5),
+			Position = Vector3.new(-27.5 + off.X, 2.3, 35 + off.Z),
+			Material = Enum.Material.Metal,
+			Color = COL_METAL_DARK,
+		})
+		post.Parent = root
+	end
+	local shelterTop = newPart({
+		Name = "ShelterRoof",
+		Size = Vector3.new(10.5, 0.5, 8),
+		Position = Vector3.new(-27.5, 4.6, 35),
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_SHED,
 	})
+	shelterTop.Parent = root
+end
 
-	-- Zone 3 — cafeteria (west). Windows on the yard-facing south side.
-	addBuilding(root, {
-		Name = "Cafeteria",
-		Center = Vector3.new(-82, 9, 26),
-		Size = Vector3.new(60, 18, 36),
-		RoofColor = COL_ROOF,
-		Windows = {
-			{ face = "Z", positions = { -104, -89, -74, -59 }, y = 7, size = Vector3.new(6, 4, 0), side = -1 },
-		},
-	})
-
-	-- Zone 3 — sports hall (east, tall dark building). West face carries the
-	-- rolling door plus two window bands clear of it.
-	addBuilding(root, {
-		Name = "SportsHall",
-		Center = Vector3.new(67.5, 12, 28),
-		Size = Vector3.new(55, 24, 40),
-		RoofColor = Color3.fromRGB(52, 56, 66),
-		Windows = {
-			{ face = "X", positions = { 12, 40 }, y = 10, size = Vector3.new(10, 6, 0), side = -1 },
-		},
-	})
-	-- Rolling door on the hall's west face.
+-- The white two-storey sports hall (idrottshall) on the south-east corner.
+local function buildHall(root: Folder)
+	addBuilding(root, "SportsHall", 95.75, -45.5, 44.5, 48, 24, COL_ROOF, COL_WALL_WHITE)
+	-- Dark rolling door on the hall's west face toward the road.
 	local rollDoor = newPart({
 		Name = "SportsHall_Door",
-		Size = Vector3.new(0.6, 10, 12),
-		Position = Vector3.new(39.6, 5.4, 28),
+		Size = Vector3.new(0.6, 11, 13),
+		Position = Vector3.new(73.2, 5.6, -50),
 		Material = Enum.Material.CorrodedMetal,
 		Color = Color3.fromRGB(130, 134, 142),
 		CanCollide = false,
 	})
 	rollDoor.Parent = root
+	-- Windows band along the west face, clear of the rolling door.
+	addWindowBand(root, "HallWindow", "X", 95.75, -40, 6, 48, 10, { -1 })
+	addWindowBand(root, "HallWindow", "X", 95.75, -52, 6, 48, 10, { -1 })
+end
 
-	-- Zone 4 — north gym across the far side. Windows on the south face so the
-	-- band is visible when entering through the zone-3 door.
-	addBuilding(root, {
-		Name = "NorthGym",
-		Center = Vector3.new(-65, 13, 101),
-		Size = Vector3.new(80, 26, 42),
-		RoofColor = COL_ROOF,
-		Windows = {
-			{ face = "Z", positions = { -92, -72, -52, -34 }, y = 10, size = Vector3.new(8, 6, 0), side = -1 },
-		},
+-- Low single-storey cafeteria wing west of the bars, black-roofed per photo.
+local function buildCafeteria(root: Folder)
+	addBuilding(root, "Wing_Cafeteria", -102.5, -25.5, 29, 22, 10, COL_ROOF)
+	addWindowBand(root, "Window", "X", -102.5, -25.5, 24, 22, 5, { 1 })
+	addWindowBand(root, "Window", "Z", -102.5, -25.5, 29, 22, 5, { 1 })
+end
+
+-- Eight-sided kiosk standing in the paved quadrangle.
+local function buildOctagon(root: Folder)
+	local cx, cz, d = -52.8, -2.2, 16
+	local h = 7
+	local boxA = newPart({
+		Name = "Kiosk_SeatA",
+		Size = Vector3.new(d, h, d),
+		Position = Vector3.new(cx, h / 2, cz),
+		Material = Enum.Material.Brick,
+		Color = COL_BRICK,
 	})
+	boxA.Parent = root
+	local boxB = newPart({
+		Name = "Kiosk_SeatB",
+		Size = Vector3.new(d * 0.707, h, d * 0.707),
+		Material = Enum.Material.Brick,
+		Color = COL_BRICK,
+	})
+	boxB.CFrame = CFrame.new(cx, h / 2, cz) * CFrame.Angles(0, math.rad(45), 0)
+	boxB.Parent = root
+	local roof = newPart({
+		Name = "Kiosk_Roof",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1.2, d * 0.8, d * 0.8),
+		CFrame = CFrame.new(cx, h + 1, cz) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Slate,
+		Color = COL_ROOF,
+	})
+	roof.Parent = root
 end
 
 ----------------------------------------------------------------------
--- Football pitch: lines, centre circle, goals
+-- Roads: asphalt strips along the measured centrelines
+----------------------------------------------------------------------
+
+local ROAD_WIDTH_MAIN = 9
+local ROAD_WIDTH_BRANCH = 5.5
+local ROAD_WIDTH_ENTRANCE = 8.5
+
+local function yRoadTop(): number
+	return 0.06
+end
+
+-- One straight asphalt strip from p1 to p2 with round joint ends.
+local function addRoadSegment(root: Folder, name: string, x1: number, z1: number, x2: number, z2: number, width: number)
+	local dx, dz = x2 - x1, z2 - z1
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length < 0.5 then
+		return
+	end
+	local ang = math.atan2(dz, dx)  -- 0 = pointing +X
+	local midX, midZ = (x1 + x2) / 2, (z1 + z2) / 2
+	local strip = newPart({
+		Name = name,
+		Size = Vector3.new(length, 0.3, width),
+		Material = Enum.Material.Asphalt,
+		Color = COL_ASPHALT,
+	})
+	-- SpaceMatrix: +X axis along the run, keeping the strip flat.
+	local dir = Vector3.new(math.cos(ang), 0, math.sin(ang))
+	strip.CFrame = CFrame.fromMatrix(
+		Vector3.new(midX, yRoadTop(), midZ),
+		dir,
+		Vector3.new(0, 1, 0)) * CFrame.Angles(0, 0, 0)
+	strip.Parent = root
+	-- Joint discs so bends read as continuous asphalt.
+	local joint = newPart({
+		Name = name .. "_Joint",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.32, width, width),
+		CFrame = CFrame.new(x2, yRoadTop(), z2) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Asphalt,
+		Color = COL_ASPHALT,
+	})
+	joint.Parent = root
+end
+
+local function buildRoads(root: Folder)
+	-- Main school road: arrives from the north park boundary, runs straight
+	-- south past the school's east side, dog-legs east around the south
+	-- wing, turns south along the hall, then bends east to the fence.
+	addRoadSegment(root, "Road_Main_1", 0, 60, -4.6, -38, ROAD_WIDTH_MAIN)
+	addRoadSegment(root, "Road_Main_2", -4.6, -38, -6, -48, ROAD_WIDTH_MAIN)
+	addRoadSegment(root, "Road_Main_3", -6, -48, 49, -53.4, ROAD_WIDTH_MAIN)
+	addRoadSegment(root, "Road_Main_4", 49, -53.4, 60.5, -75.5, ROAD_WIDTH_MAIN)
+	addRoadSegment(root, "Road_Main_5", 60.5, -75.5, 57.5, -78, ROAD_WIDTH_MAIN)
+	addRoadSegment(root, "Road_Main_6", 57.5, -78, 127.5, -76.5, ROAD_WIDTH_MAIN)
+
+	-- Minor branch: forks off the bend and drops south through the south
+	-- lawn, exiting at the fence corner.
+	addRoadSegment(root, "Road_Branch_1", 56, -80, 25, -87, ROAD_WIDTH_BRANCH)
+	addRoadSegment(root, "Road_Branch_2", 25, -87, 22.5, -97, ROAD_WIDTH_BRANCH)
+	addRoadSegment(root, "Road_Branch_3", 22.5, -97, 27, -113, ROAD_WIDTH_BRANCH)
+	addRoadSegment(root, "Road_Branch_4", 27, -113, 35, -123, ROAD_WIDTH_BRANCH)
+	addRoadSegment(root, "Road_Branch_5", 35, -123, 41, -130, ROAD_WIDTH_BRANCH)
+
+	-- Entrance service road across the north lawn, dying in a stub apron.
+	addRoadSegment(root, "Road_Entrance", -84.5, 89.5, -33, 81, ROAD_WIDTH_ENTRANCE)
+	addRoadSegment(root, "Road_Entrance_Apron", -33, 81, -26, 79.5, ROAD_WIDTH_ENTRANCE + 6)
+
+	-- White centre dashes along the main road runs.
+	for _, seg in ipairs({
+		{ 0, 60, -4.6, -38 },
+		{ -6, -48, 49, -53.4 },
+		{ 60.5, -75.5, 57.5, -78 },
+		{ 57.5, -78, 127.5, -76.5 },
+	}) do
+		local x1, z1, x2, z2 = seg[1], seg[2], seg[3], seg[4]
+		local dx, dz = x2 - x1, z2 - z1
+		local len = math.sqrt(dx * dx + dz * dz)
+		for i = 0, math.floor(len / 7) do
+			local t = (i * 7) / len
+			local px, pz = x1 + dx * t, z1 + dz * t
+			local ang = math.atan2(dz, dx)
+			local dash = newPart({
+				Name = "RoadDash",
+				Size = Vector3.new(3.4, 0.07, 0.5),
+				Material = Enum.Material.SmoothPlastic,
+				Color = COL_WHITE,
+				CanCollide = false,
+			})
+			local dir = Vector3.new(math.cos(ang), 0, math.sin(ang))
+			dash.CFrame = CFrame.fromMatrix(Vector3.new(px, 0.1, pz), dir, Vector3.new(0, 1, 0))
+			dash.Parent = root
+		end
+	end
+end
+
+----------------------------------------------------------------------
+-- Football pitch: lines, centre circle, goals (east field)
 ----------------------------------------------------------------------
 
 local function addPitchLine(root: Folder, center: Vector3, size: Vector3)
@@ -3518,9 +3654,6 @@ local function addPitchLine(root: Folder, center: Vector3, size: Vector3)
 end
 
 local function addGoal(root: Folder, x: number, zCenter: number)
-	-- Goals sit on the ends of the pitch's long (east-west) axis, inset from
-	-- the z-line ends and one stud shy of the pitch edge so zone-4 zombies
-	-- spawning on the turf never materialise inside a post.
 	for _, dz in ipairs({ -5.5, 5.5 }) do
 		local post = newPart({
 			Name = "GoalPost",
@@ -3541,7 +3674,6 @@ local function addGoal(root: Folder, x: number, zCenter: number)
 	bar.Parent = root
 end
 
--- Centre circle from white ring segments (no huge overlapping discs).
 local function addPitchCircle(root: Folder, cx: number, cy: number, cz: number, radius: number, segments: number, sizeScale: number)
 	for i = 1, segments do
 		local angle = (i / segments) * math.pi * 2
@@ -3559,56 +3691,70 @@ local function addPitchCircle(root: Folder, cx: number, cy: number, cz: number, 
 	end
 end
 
+-- Artificial turf pitch; long axis runs east-west, matching aerial.
+local PITCH_X0, PITCH_X1 = 12, 74.4
+local PITCH_Z0, PITCH_Z1 = -38.4, 0
+
 local function buildPitch(root: Folder)
-	local y = 0.44
-	addPitchLine(root, Vector3.new(70, y, 76.4), Vector3.new(94, 0, 0.7))
-	addPitchLine(root, Vector3.new(70, y, 123.6), Vector3.new(94, 0, 0.7))
-	addPitchLine(root, Vector3.new(23.4, y, 100), Vector3.new(0.7, 0, 47))
-	addPitchLine(root, Vector3.new(116.6, y, 100), Vector3.new(0.7, 0, 47))
-	addPitchLine(root, Vector3.new(70, y, 100), Vector3.new(0.7, 0, 47))
-	addPitchCircle(root, 70, y, 100, 6.5, 16, 2.2)
+	local y = 0.14
+	local cx = (PITCH_X0 + PITCH_X1) / 2
+	local cy = (PITCH_Z0 + PITCH_Z1) / 2
+	local w = PITCH_X1 - PITCH_X0
+	local d = PITCH_Z1 - PITCH_Z0
+	local turf = newPart({
+		Name = "PitchTurf",
+		Size = Vector3.new(w, 0.25, d),
+		Position = Vector3.new(cx, 0.1, cy),
+		Material = Enum.Material.Grass,
+		Color = COL_TURF,
+	})
+	turf.Parent = root
+	addPitchLine(root, Vector3.new(cx, y, PITCH_Z0), Vector3.new(w, 0, 0.7))
+	addPitchLine(root, Vector3.new(cx, y, PITCH_Z1), Vector3.new(w, 0, 0.7))
+	addPitchLine(root, Vector3.new(PITCH_X0, y, cy), Vector3.new(0.7, 0, d))
+	addPitchLine(root, Vector3.new(PITCH_X1, y, cy), Vector3.new(0.7, 0, d))
+	addPitchLine(root, Vector3.new(cx, y, cy), Vector3.new(0.7, 0, d))
+	addPitchCircle(root, cx, y, cy, 6.5, 16, 2.2)
 	local dot = newPart({
 		Name = "PitchCenterDot",
 		Size = Vector3.new(1.4, 0.06, 1.4),
-		Position = Vector3.new(70, y, 100),
+		Position = Vector3.new(cx, y, cy),
 		Material = Enum.Material.SmoothPlastic,
 		Color = COL_WHITE,
 		CanCollide = false,
 	})
 	dot.Parent = root
-
-	addGoal(root, 25, 100)
-	addGoal(root, 115, 100)
+	addGoal(root, PITCH_X0 + 1.4, cy)
+	addGoal(root, PITCH_X1 - 1.4, cy)
 end
 
 ----------------------------------------------------------------------
--- Basketball court west of the yard
+-- Basketball court on the north lawn (basketplan)
 ----------------------------------------------------------------------
 
+local COURT_X0, COURT_X1 = -48, -19
+local COURT_Z0, COURT_Z1 = 67, 90
+
 local function buildCourt(root: Folder)
-	local slab = newPart({
-		Name = "BasketCourt",
-		Size = Vector3.new(52, 0.3, 32),
-		Position = Vector3.new(-24, 0.35, 27),
-		Material = Enum.Material.Concrete,
-		Color = Color3.fromRGB(58, 62, 74),
-	})
-	slab.Parent = root
+	local cx = (COURT_X0 + COURT_X1) / 2
+	local cy = (COURT_Z0 + COURT_Z1) / 2
+	local w = COURT_X1 - COURT_X0
+	local d = COURT_Z1 - COURT_Z0
+	local slab = addSlab(root, "BasketCourt", cx, cy, w, d, 0.09, Enum.Material.Concrete, Color3.fromRGB(58, 62, 74))
 
-	local y = 0.52
-	addPitchLine(root, Vector3.new(-24, y, 11.4), Vector3.new(52, 0, 0.7))
-	addPitchLine(root, Vector3.new(-24, y, 42.6), Vector3.new(52, 0, 0.7))
-	addPitchLine(root, Vector3.new(-49.6, y, 27), Vector3.new(0.7, 0, 31))
-	addPitchLine(root, Vector3.new(1.6, y, 27), Vector3.new(0.7, 0, 31))
-	addPitchLine(root, Vector3.new(-24, y, 27), Vector3.new(0.7, 0, 31))
-	addPitchCircle(root, -24, y, 27, 5, 14, 2)
+	local y = 0.22
+	addPitchLine(root, Vector3.new(cx, y, COURT_Z0), Vector3.new(w, 0, 0.7))
+	addPitchLine(root, Vector3.new(cx, y, COURT_Z1), Vector3.new(w, 0, 0.7))
+	addPitchLine(root, Vector3.new(COURT_X0, y, cy), Vector3.new(0.7, 0, d))
+	addPitchLine(root, Vector3.new(COURT_X1, y, cy), Vector3.new(0.7, 0, d))
+	addPitchLine(root, Vector3.new(cx, y, cy), Vector3.new(0.7, 0, d))
+	addPitchCircle(root, cx, y, cy, 4.5, 12, 2)
 
-	-- Hoops at both ends.
-	for _, hx in ipairs({ -50, 2 }) do
+	for _, hx in ipairs({ COURT_X0 - 2, COURT_X1 + 2 }) do
 		local post = newPart({
 			Name = "HoopPost",
 			Size = Vector3.new(0.4, 7, 0.4),
-			Position = Vector3.new(hx, 3.6, 27),
+			Position = Vector3.new(hx, 3.6, cy),
 			Material = Enum.Material.Metal,
 			Color = COL_METAL_DARK,
 		})
@@ -3616,7 +3762,7 @@ local function buildCourt(root: Folder)
 		local board = newPart({
 			Name = "HoopBoard",
 			Size = Vector3.new(0.3, 3, 4.2),
-			Position = Vector3.new(hx + (if hx < -24 then -0.6 else 0.6), 6.4, 27),
+			Position = Vector3.new(hx + (if hx < cx then -0.6 else 0.6), 6.4, cy),
 			Material = Enum.Material.SmoothPlastic,
 			Color = COL_WHITE,
 			CanCollide = false,
@@ -3625,7 +3771,7 @@ local function buildCourt(root: Folder)
 		local ring = newPart({
 			Name = "HoopRing",
 			Size = Vector3.new(1.4, 0.14, 1.4),
-			Position = Vector3.new(hx + (if hx < -24 then -1.4 else 1.4), 5.2, 27),
+			Position = Vector3.new(hx + (if hx < cx then -1.4 else 1.4), 5.2, cy),
 			Material = Enum.Material.Neon,
 			Color = Color3.fromRGB(240, 110, 40),
 			Shape = Enum.PartType.Cylinder,
@@ -3633,21 +3779,26 @@ local function buildCourt(root: Folder)
 		})
 		ring.Parent = root
 	end
+	return slab
 end
 
 ----------------------------------------------------------------------
--- Parking: stalls, cars (two rows), one stray puddle-avoider
+-- Parking forecourt south of the school (Uthamra skolväg side)
 ----------------------------------------------------------------------
 
 local function buildParking(root: Folder, rand: Random)
-	-- Stall divider lines, two rows.
-	for _, rowZ in ipairs({ -93, -110 }) do
-		for i = 0, 7 do
-			local x = -34 + i * 12
+	-- Paved arrival forecourt in front of the south wing.
+	addSlab(root, "ParkingApron", -5, -94, 50, 20, 0.04, Enum.Material.Asphalt, COL_ASPHALT)
+	-- Paved walk strip through the hall-forecourt gate (boundary 1 door).
+	addSlab(root, "HallWalk", 48.5, -66, 6, 28, 0.03, Enum.Material.Concrete, Color3.fromRGB(150, 150, 156))
+
+	for _, rowZ in ipairs({ -88.5, -99.5 }) do
+		for i = 0, 5 do
+			local x = -28 + i * 9.5
 			local line = newPart({
 				Name = "StallLine",
 				Size = Vector3.new(0.3, 0.05, 6),
-				Position = Vector3.new(x, 0.45, rowZ),
+				Position = Vector3.new(x, 0.16, rowZ),
 				Material = Enum.Material.SmoothPlastic,
 				Color = COL_WHITE,
 				CanCollide = false,
@@ -3656,8 +3807,6 @@ local function buildParking(root: Folder, rand: Random)
 		end
 	end
 
-	-- Cars: parked between stall lines. Two cars sit where the spawn pad is,
-	-- so those stalls are left empty deliberately.
 	local palette = {
 		Color3.fromRGB(226, 228, 232),
 		Color3.fromRGB(40, 44, 52),
@@ -3666,15 +3815,15 @@ local function buildParking(root: Folder, rand: Random)
 		Color3.fromRGB(196, 160, 60),
 	}
 	local carCells = {
-		{ -22, -92 }, { 26, -92 }, { 50, -92 },
-		{ -34, -109 }, { 26, -109 }, { 50, -109 },
+		{ -24, -88.5 }, { -5, -88.5 }, { 14, -88.5 },
+		{ -24, -99.5 }, { 5, -99.5 }, { 18, -99.5 },
 	}
 	for _, cell in ipairs(carCells) do
 		local color = palette[rand:Int(1, #palette)]
 		local body = newPart({
 			Name = "Car",
 			Size = Vector3.new(4.2, 2.6, 8.6),
-			Position = Vector3.new(cell[1], 1.7, cell[2]),
+			Position = Vector3.new(cell[1], 1.6, cell[2]),
 			Material = Enum.Material.SmoothPlastic,
 			Color = color,
 		})
@@ -3682,7 +3831,7 @@ local function buildParking(root: Folder, rand: Random)
 		local cabin = newPart({
 			Name = "CarCabin",
 			Size = Vector3.new(3.6, 1.5, 4.2),
-			Position = Vector3.new(cell[1], 3.7, cell[2] + 0.4),
+			Position = Vector3.new(cell[1], 3.6, cell[2] + 0.4),
 			Material = Enum.Material.Glass,
 			Color = Color3.fromRGB(28, 38, 48),
 		})
@@ -3691,115 +3840,11 @@ local function buildParking(root: Folder, rand: Random)
 end
 
 ----------------------------------------------------------------------
--- Playground (zone 2, east of the annex wing)
+-- Yard props: benches, planters, picnic tables, bins, propane tanks
 ----------------------------------------------------------------------
 
-local function buildPlayground(root: Folder, rand: Random)
-	local cx, cz = 62, -20
-
-	-- Sandbox with timber border.
-	local sand = newPart({
-		Name = "Sandpit",
-		Size = Vector3.new(16, 0.25, 12),
-		Position = Vector3.new(cx, 0.5, cz),
-		Material = Enum.Material.Sand,
-		Color = COL_SAND,
-	})
-	sand.Parent = root
-	for _, off in ipairs({
-		Vector3.new(0, 0.6, -6), Vector3.new(0, 0.6, 6),
-		Vector3.new(-8, 0.6, 0), Vector3.new(8, 0.6, 0),
-	}) do
-		local rail = newPart({
-			Name = "SandpitRail",
-			Size = Vector3.new(if off.X ~= 0 then 0.5 else 16.8, 0.7, if off.Z ~= 0 then 0.5 else 12.8),
-			Position = Vector3.new(cx + off.X, 0.75, cz + off.Z),
-			Material = Enum.Material.WoodPlanks,
-			Color = COL_WOOD,
-		})
-		rail.Parent = root
-	end
-
-	-- Climbing frame: four posts and two top beams.
-	for _, off in ipairs({
-		Vector3.new(-6, 0, -3), Vector3.new(6, 0, -3),
-		Vector3.new(-6, 0, 3), Vector3.new(6, 0, 3),
-	}) do
-		local post = newPart({
-			Name = "ClimbPost",
-			Size = Vector3.new(0.6, 8, 0.6),
-			Position = Vector3.new(cx + off.X, 4.4, cz + off.Z),
-			Material = Enum.Material.Metal,
-			Color = Color3.fromRGB(196, 90, 60),
-		})
-		post.Parent = root
-	end
-	for _, dz in ipairs({ -3, 3 }) do
-		local beam = newPart({
-			Name = "ClimbBeam",
-			Size = Vector3.new(12, 0.5, 0.5),
-			Position = Vector3.new(cx, 8.4, cz + dz),
-			Material = Enum.Material.Metal,
-			Color = COL_METAL,
-		})
-		beam.Parent = root
-	end
-
-	-- Slide: platform with a wedge run-out.
-	local platform = newPart({
-		Name = "SlidePlatform",
-		Size = Vector3.new(4, 0.5, 4),
-		Position = Vector3.new(cx - 10, 3.2, cz + 6),
-		Material = Enum.Material.Metal,
-		Color = Color3.fromRGB(70, 130, 180),
-	})
-	platform.Parent = root
-	for _, off in ipairs({ Vector3.new(-1.6, -1.6, 0), Vector3.new(1.6, -1.6, 0), Vector3.new(0, -1.6, -1.6), Vector3.new(0, -1.6, 1.6) }) do
-		local leg = newPart({
-			Name = "SlideLeg",
-			Size = Vector3.new(0.4, 3.2, 0.4),
-			Position = Vector3.new(cx - 10 + off.X, 1.4, cz + 6 + off.Z),
-			Material = Enum.Material.Metal,
-			Color = COL_METAL,
-		})
-		leg.Parent = root
-	end
-	local slide = newPart({
-		Name = "SlideRun",
-		Shape = Enum.PartType.Wedge,
-		Size = Vector3.new(3.2, 3, 7),
-		CFrame = CFrame.new(cx - 10, 1.9, cz + 10.5) * CFrame.Angles(0, math.pi, 0),
-		Material = Enum.Material.SmoothPlastic,
-		Color = Color3.fromRGB(220, 170, 40),
-	})
-	slide.Parent = root
-
-	-- Seesaw.
-	local pivot = newPart({
-		Name = "SeesawPost",
-		Size = Vector3.new(0.8, 1.4, 0.8),
-		Position = Vector3.new(cx + 10, 1.1, cz + 6),
-		Material = Enum.Material.Metal,
-		Color = COL_METAL,
-	})
-	pivot.Parent = root
-	local plank = newPart({
-		Name = "SeesawPlank",
-		Size = Vector3.new(1.4, 0.4, 10),
-		CFrame = CFrame.new(cx + 10, 2.1, cz + 6) * CFrame.Angles(0, 0, rand:Range(-0.15, 0.15)),
-		Material = Enum.Material.WoodPlanks,
-		Color = Color3.fromRGB(60, 140, 100),
-	})
-	plank.Parent = root
-end
-
-----------------------------------------------------------------------
--- Yard props: benches, planters, bike racks, tables, bins, propane tanks
-----------------------------------------------------------------------
-
-local function addBench(root: Folder, x: number, z: number, groundY: number, yawDeg: number)
-	local yaw = CFrame.Angles(0, math.rad(yawDeg), 0)
-	local base = CFrame.new(x, groundY, z) * yaw
+local function addBench(root: Folder, x: number, z: number, yawDeg: number)
+	local base = CFrame.new(x, 0.12, z) * CFrame.Angles(0, math.rad(yawDeg), 0)
 	for _, off in ipairs({ Vector3.new(-1.8, 0.95, 0), Vector3.new(1.8, 0.95, 0) }) do
 		local leg = newPart({
 			Name = "BenchLeg",
@@ -3829,11 +3874,11 @@ local function addBench(root: Folder, x: number, z: number, groundY: number, yaw
 	back.Parent = root
 end
 
-local function addPlanter(root: Folder, x: number, z: number, groundY: number)
+local function addPlanter(root: Folder, x: number, z: number)
 	local box = newPart({
 		Name = "Planter",
 		Size = Vector3.new(4.5, 1.8, 4.5),
-		Position = Vector3.new(x, groundY + 0.9, z),
+		Position = Vector3.new(x, 0.9, z),
 		Material = Enum.Material.Concrete,
 		Color = Color3.fromRGB(118, 118, 124),
 	})
@@ -3842,47 +3887,12 @@ local function addPlanter(root: Folder, x: number, z: number, groundY: number)
 		Name = "PlanterBush",
 		Shape = Enum.PartType.Ball,
 		Size = Vector3.new(3.4, 3.4, 3.4),
-		Position = Vector3.new(x, groundY + 3.1, z),
+		Position = Vector3.new(x, 2.9, z),
 		Material = Enum.Material.Grass,
 		Color = Color3.fromRGB(58, 104, 52),
 		CanCollide = false,
 	})
 	bush.Parent = root
-end
-
-local function addBikeRack(root: Folder)
-	-- Row of hoops under the Wing A entrance canopy — the school's bike
-	-- shelter. Clear of the bench rows and the door glass.
-	local ry = 0.4
-	local rack = newPart({
-		Name = "BikeRackBase",
-		Size = Vector3.new(12, 0.2, 0.5),
-		Position = Vector3.new(-78, ry + 0.1, -23),
-		Material = Enum.Material.Metal,
-		Color = COL_METAL,
-	})
-	rack.Parent = root
-	for i = 0, 3 do
-		local bar = newPart({
-			Name = "BikeHoop",
-			Size = Vector3.new(0.25, 2.4, 0.25),
-			Position = Vector3.new(-83 + i * 3.4, ry + 1.3, -23),
-			Material = Enum.Material.Metal,
-			Color = COL_METAL,
-		})
-		bar.Parent = root
-	end
-	-- A few abandoned bikes (bodies only, stylised).
-	for _, bike in ipairs({ { -81, -23.8 }, { -78, -23.8 }, { -75, -23.8 } }) do
-		local body = newPart({
-			Name = "Bike",
-			Size = Vector3.new(1.1, 1.2, 2.2),
-			Position = Vector3.new(bike[1], 1.3, bike[2]),
-			Material = Enum.Material.Metal,
-			Color = Color3.fromRGB(180, 60, 50),
-		})
-		body.Parent = root
-	end
 end
 
 local function addPicnicTable(root: Folder, x: number, z: number)
@@ -3904,7 +3914,10 @@ local function addPicnicTable(root: Folder, x: number, z: number)
 		})
 		benchPart.Parent = root
 	end
-	for _, off in ipairs({ Vector3.new(-0.9, 0, -2.6), Vector3.new(0.9, 0, -2.6), Vector3.new(-0.9, 0, 2.6), Vector3.new(0.9, 0, 2.6) }) do
+	for _, off in ipairs({
+		Vector3.new(-0.9, 0, -2.6), Vector3.new(0.9, 0, -2.6),
+		Vector3.new(-0.9, 0, 2.6), Vector3.new(0.9, 0, 2.6),
+	}) do
 		local leg = newPart({
 			Name = "TableLeg",
 			Size = Vector3.new(0.25, 1.8, 0.25),
@@ -3916,14 +3929,14 @@ local function addPicnicTable(root: Folder, x: number, z: number)
 	end
 end
 
--- Propane/heat tanks: keep the explosive-barrel gameplay, reskinned for a
--- school's service yard.
-local function addPropaneTank(root: Folder, x: number, z: number, groundY: number)
+-- Propane/heat tanks keep the explosive-barrel gameplay, reskinned for the
+-- school's service corners.
+local function addPropaneTank(root: Folder, x: number, z: number)
 	local tank = newPart({
 		Name = "PropaneTank",
 		Shape = Enum.PartType.Cylinder,
 		Size = Vector3.new(4.4, 3, 3),
-		Position = Vector3.new(x, groundY + 2.2, z),
+		Position = Vector3.new(x, 2.3, z),
 		Material = Enum.Material.Metal,
 		Color = Color3.fromRGB(178, 62, 48),
 	})
@@ -3945,61 +3958,58 @@ local function addDumpster(root: Folder, x: number, z: number)
 end
 
 local function buildYardProps(root: Folder)
-	-- Benches along the classroom wing's south face. The x = -78 slot is the
-	-- entrance door + canopy, so benches flank it instead of sitting in it.
-	for _, bx in ipairs({ -100, -89, -67, -56 }) do
-		addBench(root, bx, -22, 0.4, 180)
+	-- Benches along the cafeteria's east face, facing the quadrangle.
+	for _, z in ipairs({ -33, -25.5, -18 }) do
+		addBench(root, -85, z, 0)
 	end
-	-- Benches outside the cafeteria's north face.
-	for _, bx in ipairs({ -98, -84, -70 }) do
-		addBench(root, bx, 4, 0, 0)
+	-- Benches along the west bar south shoulder facing the quadrangle.
+	for _, x in ipairs({ -92, -80 }) do
+		addBench(root, x, -18, 180)
 	end
-	-- Two benches facing the pitch sideline.
-	addBench(root, 16, 88, 0, 90)
-	addBench(root, 16, 112, 0, 90)
+	-- Two benches on the south lawn facing the pitch sidelines.
+	addBench(root, 18, -62, 0)
+	addBench(root, 34, -62, 0)
 
-	-- Planters green the yard and mark paths.
+	-- Planters edging paths and the yard.
 	for _, p in ipairs({
-		{ 6, 8 }, { 18, 2 }, { 14, 46 }, { -10, 52 },
-		{ 52, -60 }, { 52, 60 }, { -30, -80 }, { 34, -80 },
+		{ 38, -47 }, { 26, -47 }, { -30, -22 }, { -70, -18 },
+		{ -60, 30 }, { 55, -30 }, { -72, 62 }, { 25, 45 },
 	}) do
-		addPlanter(root, p[1], p[2], if p[2] >= -70 and p[2] <= 52 then 0.4 else 0)
+		addPlanter(root, p[1], p[2])
 	end
 
-	addBikeRack(root)
-
-	-- Picnic tables west of the cafeteria.
-	for _, tz in ipairs({ 14, 26, 38 }) do
-		addPicnicTable(root, -44, tz)
+	-- Picnic tables west of the cafeteria (photo's courtyard seating).
+	for _, z in ipairs({ -38, -33, -28 }) do
+		addPicnicTable(root, -116, z)
 	end
 
-	-- Waste bins beside the north gym.
-	addDumpster(root, -18, 94)
-	addDumpster(root, -18, 110)
+	-- Waste bins flanking the sports hall's east wall.
+	addDumpster(root, 122, -55)
+	addDumpster(root, 122, -63)
 
-	-- Propane tanks clustered at service points.
-	for _, t in ipairs({
-		{ -110, 1, 0 }, { -100, 1, 0 }, { -90, 1, 0 },
-		{ -36, -118, 0.4 }, { -36, -104, 0.4 },
-		{ 48, 52, 0.4 }, { 60, 52, 0.4 }, { 72, 52, 0.4 },
-		{ -90, -60, 0 }, { -100, -60, 0 },
-		{ -66, 74, 0 }, { -40, 74, 0 },
-		{ 26, -42, 0.4 }, { 26, -46, 0.4 },
-	}) do
-		addPropaneTank(root, t[1], t[2], t[3])
+	-- Propane tanks at service points: hall flank, south tail corner,
+	-- and a couple scattered through the yard.
+	local tanks = {
+		{ 66, -66 }, { 66, -58 },
+		{ 30, -84 }, { 40, -70 },
+		{ -60, -35 }, { -55, -30 },
+		{ -118, -45 }, { 20, 30 },
+	}
+	for _, t in ipairs(tanks) do
+		addPropaneTank(root, t[1], t[2])
 	end
 end
 
 ----------------------------------------------------------------------
--- Signs and the flagpole: the school's own identity
+-- Signs and the flagpole
 ----------------------------------------------------------------------
 
 local function buildSignage(root: Folder)
-	-- School sign near the arrival area.
+	-- School sign on the south wing's north face (aerial pin position).
 	local post = newPart({
 		Name = "SignPost",
 		Size = Vector3.new(0.8, 7, 0.8),
-		Position = Vector3.new(-26, 4, -88),
+		Position = Vector3.new(12, 3.5, -52),
 		Material = Enum.Material.Metal,
 		Color = COL_METAL_DARK,
 	})
@@ -4007,7 +4017,7 @@ local function buildSignage(root: Folder)
 	local panel = newPart({
 		Name = "SignPanel",
 		Size = Vector3.new(14, 4.5, 0.6),
-		Position = Vector3.new(-26, 9, -88),
+		Position = Vector3.new(12, 8, -52),
 		Material = Enum.Material.Metal,
 		Color = Color3.fromRGB(24, 60, 44),
 	})
@@ -4016,7 +4026,6 @@ local function buildSignage(root: Folder)
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "SignText"
 	gui.Size = UDim2.new(0, 340, 0, 110)
-	gui.StudsOffset = Vector3.new(0, 0, 0)
 	gui.MaxDistance = 160
 	gui.Adornee = panel
 	gui.Parent = panel
@@ -4035,32 +4044,30 @@ local function buildSignage(root: Folder)
 	label.Text = schoolName
 	label.Parent = gui
 
-	-- Swedish flag on a pole by the yard entrance.
+	-- Swedish flag on a pole by the entrance road stub.
 	local pole = newPart({
 		Name = "Flagpole",
 		Shape = Enum.PartType.Cylinder,
 		Size = Vector3.new(18, 0.6, 0.6),
-		CFrame = CFrame.new(0, 9, -80) * CFrame.Angles(0, 0, math.rad(90)),
+		CFrame = CFrame.new(-70, 9.2, 86) * CFrame.Angles(0, 0, math.rad(90)),
 		Material = Enum.Material.Metal,
 		Color = COL_METAL_DARK,
 	})
 	pole.Parent = root
-	local flagY = 15.4
+	local flagY = 15.6
 	local flag = newPart({
 		Name = "FlagBlue",
 		Size = Vector3.new(0.25, 2, 4),
-		Position = Vector3.new(0, flagY, -80 + 0), -- grows along Z from the pole
+		Position = Vector3.new(-70, flagY, 84),
 		Material = Enum.Material.SmoothPlastic,
 		Color = COL_FLAG_BLUE,
 		CanCollide = false,
 	})
-	-- Position the flag field so it hangs east of the pole.
-	flag.Position = Vector3.new(0, flagY, -78)
 	flag.Parent = root
 	local stripeV = newPart({
 		Name = "FlagCrossV",
 		Size = Vector3.new(0.3, 2, 0.9),
-		Position = Vector3.new(0, flagY, -78 + 0.9),
+		Position = Vector3.new(-70, flagY, 85),
 		Material = Enum.Material.SmoothPlastic,
 		Color = COL_FLAG_YELLOW,
 		CanCollide = false,
@@ -4069,7 +4076,7 @@ local function buildSignage(root: Folder)
 	local stripeH = newPart({
 		Name = "FlagCrossH",
 		Size = Vector3.new(0.3, 0.7, 4),
-		Position = Vector3.new(0, flagY + 0.55, -78),
+		Position = Vector3.new(-70, flagY + 0.55, 84),
 		Material = Enum.Material.SmoothPlastic,
 		Color = COL_FLAG_YELLOW,
 		CanCollide = false,
@@ -4078,7 +4085,7 @@ local function buildSignage(root: Folder)
 end
 
 ----------------------------------------------------------------------
--- Pine forest ring (outside the fence)
+-- Trees: pines for the forest ring, birches scattered on the grounds
 ----------------------------------------------------------------------
 
 local function addPine(root: Folder, x: number, z: number, rand: Random)
@@ -4110,31 +4117,126 @@ local function addPine(root: Folder, x: number, z: number, rand: Random)
 	end
 end
 
+-- Deciduous tree for the lawn edges (trunk + two foliage spheres).
+local function addBirch(root: Folder, x: number, z: number, rand: Random)
+	local height = rand:Range(11, 15)
+	local trunk = newPart({
+		Name = "Trunk",
+		Size = Vector3.new(1.2, height, 1.2),
+		Position = Vector3.new(x, height / 2, z),
+		Material = Enum.Material.Wood,
+		Color = Color3.fromRGB(196, 190, 172),
+	})
+	trunk.Parent = root
+	local leafLow = newPart({
+		Name = "Leaves",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(8, 7, 8),
+		Position = Vector3.new(x, height + 1.4, z),
+		Material = Enum.Material.Grass,
+		Color = COL_LEAF,
+		CanCollide = false,
+	})
+	leafLow.Parent = root
+	local leafHigh = newPart({
+		Name = "Leaves",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(5.6, 5, 5.6),
+		Position = Vector3.new(x + 1.2, height + 4.6, z - 1),
+		Material = Enum.Material.Grass,
+		Color = COL_LEAF,
+		CanCollide = false,
+	})
+	leafHigh.Parent = root
+end
+
 local function buildForest(root: Folder, rand: Random)
-	-- A ring of pines outside the fence, with jitter for an organic treeline.
+	-- Pine ring OUTSIDE the fence.
 	local step = 22
-	local jitterPos = 6
 	for side = 1, 4 do
 		for i = -6, 6 do
 			local t: number = i * step
-			local jit: number = rand:Range(-jitterPos, jitterPos)
+			local jit: number = rand:Range(-6, 6)
 			local x: number, z: number
 			if side == 1 then
 				x, z = t + jit, 150
 			elseif side == 2 then
-				x, z = t + jit, -150
+				x, z = t + jit, -155
 			elseif side == 3 then
 				x, z = 150, t + jit
 			else
-				x, z = -150, t + jit
+				x, z = -155, t + jit
 			end
 			addPine(root, x, z, rand)
 		end
 	end
-	-- Corner fills so the ring looks continuous.
-	for _, c in ipairs({ { 140, 140 }, { -140, 140 }, { 140, -140 }, { -140, -140 } }) do
+	for _, c in ipairs({ { 145, 145 }, { -150, 145 }, { 145, -150 }, { -150, -155 } }) do
 		addPine(root, c[1], c[2], rand)
 	end
+
+	-- Pines inside the mapped forest patches (SW, NE, NW, SE).
+	local patchPines = {
+		{ -125, -90 }, { -110, -110 }, { -92, -85 }, { -80, -120 }, { -62, -140 },
+		{ -42, -160 }, { -25, -170 }, { -8, -178 }, { -45, -95 }, { -70, -75 },
+		{ 30, 12 }, { 52, 18 }, { 75, 22 }, { 100, 30 }, { 122, 48 },
+		{ 110, 70 }, { 90, 68 }, { 70, 60 }, { 48, 52 }, { 36, 70 },
+		{ 25, 92 }, { 45, 105 }, { 118, 95 }, { 128, 72 },
+		{ -140, 40 }, { -140, 75 }, { -122, 25 }, { -145, 92 },
+		{ 118, -120 }, { 128, -142 }, { 104, -140 }, { 140, -110 }, { 122, -95 },
+	}
+	for _, p in ipairs(patchPines) do
+		addPine(root, p[1] + rand:Range(-2, 2), p[2] + rand:Range(-2, 2), rand)
+	end
+
+	-- Birches rooting the lawn edges: north-lawn cluster by the court, the
+	-- yard shoulder east of the school road, and the west lawn edge.
+	local birches = {
+		{ -62, 44 }, { -58, 50 }, { -64, 54 }, { -70, 48 },
+		{ 0, -60 }, { -4, -57 }, { 7, -64 }, { 11, -70 },
+		{ -120, -40 }, { -122, -55 }, { 20, 42 }, { 26, 35 },
+		{ -118, -150 }, { 40, -132 },
+	}
+	for _, p in ipairs(birches) do
+		addBirch(root, p[1], p[2], rand)
+	end
+end
+
+----------------------------------------------------------------------
+-- Villa houses on the forest edges (backdrop scenery)
+----------------------------------------------------------------------
+
+local function addVilla(root: Folder, name: string, x: number, z: number, xSize: number, zSize: number, height: number, yawDeg: number, roofColor: Color3)
+	local cf = CFrame.new(x, height / 2, z) * CFrame.Angles(0, math.rad(yawDeg), 0)
+	local body = newPart({
+		Name = name,
+		Size = Vector3.new(xSize, height, zSize),
+		CFrame = cf,
+		Material = Enum.Material.SmoothPlastic,
+		Color = COL_WALL_WHITE,
+	})
+	body.Parent = root
+	local roof = newPart({
+		Name = name .. "_Roof",
+		Size = Vector3.new(xSize + 1.6, 1.6, zSize + 1.6),
+		CFrame = CFrame.new(x, height + 1, z) * CFrame.Angles(0, math.rad(yawDeg), 0),
+		Material = Enum.Material.Slate,
+		Color = roofColor,
+	})
+	roof.Parent = root
+end
+
+local function buildVillas(root: Folder)
+	-- North-west villa inside the fence corner.
+	addVilla(root, "Villa_NW", -114, 42, 26, 20, 11, 15, COL_ROOF)
+	-- North-east houses along the top edge, mostly beyond the fence.
+	addVilla(root, "Villa_NE_A", 36, 110, 18, 14, 10, 15, COL_ROOF)
+	addVilla(root, "Villa_NE_B", 54, 112, 17, 15, 10, 15, COL_ROOF)
+	addVilla(root, "Villa_NE_C", 71, 116, 13, 12, 9, 15, COL_ROOF)
+	addVilla(root, "Villa_NE_D", 85, 121, 15, 12, 10, 15, COL_ROOF)
+	-- Small utility sheds: one by the branch road, one north of the hall's
+	-- west face (the pump-house clear of the road's south leg).
+	addVilla(root, "Shed_South", 35.5, -92, 9, 8, 6, 15, COL_ROOF_WHITE)
+	addVilla(root, "Shed_Hall", 58, -26, 10, 6, 6, 15, COL_ROOF_WHITE)
 end
 
 ----------------------------------------------------------------------
@@ -4147,8 +4249,6 @@ local function buildBoundary(root: Folder, m: MapSettings)
 	local t: number = m.WallThickness
 	local half: number = size / 2
 
-	-- Invisible colliders: keep players and zombies inside without visually
-	-- walling off the forest.
 	local specs = {
 		{ "Boundary_North", Vector3.new(size, h, t), Vector3.new(0, h / 2, -half - t / 2) },
 		{ "Boundary_South", Vector3.new(size, h, t), Vector3.new(0, h / 2, half + t / 2) },
@@ -4166,8 +4266,7 @@ local function buildBoundary(root: Folder, m: MapSettings)
 		w.Parent = root
 	end
 
-	-- Low chain-link-style fence just inside the boundary, like the photo's
-	-- black yard fence.
+	-- Low black chain-link fence just inside the boundary.
 	local fenceHalf = half - 1
 	local fenceSpecs = {
 		{ Vector3.new(size - 2, 4.2, 0.3), Vector3.new(0, 2.6, -fenceHalf) },
@@ -4182,7 +4281,7 @@ local function buildBoundary(root: Folder, m: MapSettings)
 			Position = fs[2],
 			Material = Enum.Material.DiamondPlate,
 			Color = COL_FENCE,
-			Transparency = 0.25,
+			Transparency = 0.35,
 			CanCollide = false,
 		})
 		slat.Parent = root
@@ -4211,7 +4310,6 @@ local function buildBoundary(root: Folder, m: MapSettings)
 		end
 	end
 
-	-- Prevent players escaping over the top during knockback.
 	local lid = newPart({
 		Name = "KillBrick_Ceiling",
 		Size = Vector3.new(size, 2, size),
@@ -4223,12 +4321,21 @@ local function buildBoundary(root: Folder, m: MapSettings)
 end
 
 ----------------------------------------------------------------------
--- Zone walls as brick wings + buyable doors
+-- Zone fences and buyable doors
+--
+-- Boundary lines run along the site's own fence lines, with each gap
+-- placed at a genuine passage:
+--   boundary 1 (z -65): gate between the south wing and the hall forecourt
+--   boundary 2 (z 0):   gate across the school road east of the east bar
+--   boundary 3 (z 65):  gate where the school road leaves the north park
+-- Where the line crosses actual buildings (south wing, east bar,
+-- cafeteria, sports hall) no wall is drawn: the buildings seal the line.
 ----------------------------------------------------------------------
 
--- Splits the arena into zones separated by building wings, each pierced by a
--- buyable door. Zone 1 is open; later zones cost progressively more.
-local function buildZonesAndDoors(root: Folder, m: MapSettings)
+type WallSeg = { x1: number, x2: number }
+type DoorSpec = { index: number, z: number, xCenter: number, width: number, opensFree: boolean }
+
+local function buildZoneFences(root: Folder, m: MapSettings)
 	local count: number = m.ZoneCount
 	if count < 2 then
 		return
@@ -4239,15 +4346,10 @@ local function buildZonesAndDoors(root: Folder, m: MapSettings)
 	local zones = Instance.new("Folder")
 	zones.Name = "Zones"
 	zones.Parent = root
-
-	local doors = Instance.new("Folder")
-	doors.Name = "Doors"
-	doors.Parent = root
-
 	for i = 1, count do
 		local zCenter: number = -half + width * (i - 1) + width / 2
 		local marker = newPart({
-			Name = "Zone_" .. i,
+			Name = "Zone_" .. tostring(i),
 			Size = Vector3.new(4, 2, 4),
 			Position = Vector3.new(0, 1.5, zCenter),
 			Transparency = 1,
@@ -4257,63 +4359,93 @@ local function buildZonesAndDoors(root: Folder, m: MapSettings)
 		marker.Parent = zones
 	end
 
-	for boundary = 1, count - 1 do
-		local zPos: number = -half + width * boundary
-		local doorWidth: number = 24
-		local sideWidth: number = (m.ArenaSize - doorWidth) / 2
+	local doorsFolder = Instance.new("Folder")
+	doorsFolder.Name = "Doors"
+	doorsFolder.Parent = root
 
-		-- Boundary wings: brick face + dark roof, reading as school buildings.
-		for _, side in ipairs({ -1, 1 }) do
-			local cx: number = side * (doorWidth / 2 + sideWidth / 2)
-			local wall = newPart({
-				Name = string.format("BoundaryWing_%d_%d", boundary, side),
-				Size = Vector3.new(sideWidth, WING_WALL_HEIGHT, m.DoorThickness),
-				Position = Vector3.new(cx, WING_WALL_HEIGHT / 2, zPos),
-				Material = Enum.Material.Brick,
-				Color = COL_BRICK,
+	local doorSpecs: { DoorSpec } = {
+		{ index = 1, z = -65, xCenter = 62, width = 22, opensFree = true },
+		{ index = 2, z = 0, xCenter = 6, width = 24, opensFree = false },
+		{ index = 3, z = 65, xCenter = 1, width = 24, opensFree = false },
+	}
+	-- Visual fence + invisible barrier runs per boundary, excluding both the
+	-- door gap and building-crossing spans.
+	local wallRuns: { { number } } = {
+		{ -130, -37, -65 },
+		{ 73.5, 74.5, -65 },
+		{ 118, 130, -65 },
+		{ -130, -118, 0 },
+		{ -88, -37, 0 },
+		{ 18, 74, 0 },
+		{ 118, 130, 0 },
+		{ -130, -11, 65 },
+		{ 13, 130, 65 },
+	}
+
+	for _, run in ipairs(wallRuns) do
+		local x1, x2, z = run[1], run[2], run[3]
+		local length = x2 - x1
+		local cx = (x1 + x2) / 2
+		-- Invisible collider keeping zones sealed at full height.
+		local barrier = newPart({
+			Name = string.format("ZoneFence_%d_Barrier", z),
+			Size = Vector3.new(length, m.WallHeight, m.DoorThickness),
+			Position = Vector3.new(cx, m.WallHeight / 2, z),
+			Transparency = 1,
+			CanCollide = true,
+		})
+		barrier.Parent = root
+		-- Visual black fence matching the site's yard fences.
+		local slat = newPart({
+			Name = string.format("ZoneFence_%d_Slat", z),
+			Size = Vector3.new(length, 4.2, 0.35),
+			Position = Vector3.new(cx, 2.6, z),
+			Material = Enum.Material.DiamondPlate,
+			Color = COL_FENCE,
+			Transparency = 0.25,
+			CanCollide = false,
+		})
+		slat.Parent = root
+		local posts = math.max(2, math.floor(length / 11))
+		for i = 0, posts do
+			local px = x1 + (length / posts) * i
+			local post = newPart({
+				Name = "ZoneFencePost",
+				Size = Vector3.new(0.5, 4.6, 0.5),
+				Position = Vector3.new(px, 2.3, z),
+				Material = Enum.Material.Metal,
+				Color = COL_FENCE,
+				CanCollide = false,
 			})
-			wall.Parent = root
-			local roof = newPart({
-				Name = string.format("BoundaryWingRoof_%d_%d", boundary, side),
-				Size = Vector3.new(sideWidth + 6, WING_ROOF_HEIGHT, m.DoorThickness + 6),
-				Position = Vector3.new(cx, WING_WALL_HEIGHT + WING_ROOF_HEIGHT / 2, zPos),
-				Material = Enum.Material.Slate,
-				Color = COL_ROOF,
-			})
-			roof.Parent = root
+			post.Parent = root
 		end
+	end
 
-		-- The buyable door itself.
-		--
-		-- The FIRST boundary is deliberately left OPEN. Players begin in zone 1
-		-- with few coins, so a paywalled first exit means they literally cannot
-		-- leave the arrival lot until they have killed enough to afford it —
-		-- and if spawns are filtered to reachable zones they may never get the
-		-- chance. Every later door charges the escalating price as intended.
-		local isExit: boolean = (boundary == 1)
-		local cost: number = if isExit then 0 else math.floor(m.DoorCost * (m.DoorCostGrowth ^ (boundary - 2)) + 0.5)
+	for _, spec in ipairs(doorSpecs) do
+		local isExit: boolean = spec.opensFree
+		local cost: number = if isExit then 0 else math.floor(
+			m.DoorCost * (m.DoorCostGrowth ^ (spec.index - 2)) + 0.5)
 		local door = newPart({
-			Name = string.format("Door_%d", boundary),
-			Size = Vector3.new(doorWidth, DOOR_HEIGHT, m.DoorThickness),
-			Position = Vector3.new(0, DOOR_HEIGHT / 2, zPos),
+			Name = string.format("Door_%d", spec.index),
+			Size = Vector3.new(spec.width, DOOR_HEIGHT, m.DoorThickness),
+			Position = Vector3.new(spec.xCenter, DOOR_HEIGHT / 2, spec.z),
 			Material = Enum.Material.Metal,
 			Color = Color3.fromRGB(120, 80, 50),
 			Transparency = 0.15,
 			CanCollide = not isExit,
 		})
 		door:SetAttribute("IsDoor", true)
-		door:SetAttribute("DoorIndex", boundary)
+		door:SetAttribute("DoorIndex", spec.index)
 		door:SetAttribute("Cost", cost)
 		door:SetAttribute("Open", isExit)
-		door:SetAttribute("LeadsToZone", boundary + 1)
-		door.Parent = doors
+		door:SetAttribute("LeadsToZone", spec.index + 1)
+		door.Parent = doorsFolder
 
 		if isExit then
 			-- Sink the open exit out of the way so it reads as a passage.
 			local d: any = door
-			d.Position = Vector3.new(0, -20, zPos)
+			d.Position = Vector3.new(spec.xCenter, -20, spec.z)
 		else
-			-- Prompt label so players know the price.
 			local gui = Instance.new("BillboardGui")
 			gui.Name = "PriceLabel"
 			gui.Size = UDim2.new(0, 160, 0, 44)
@@ -4337,51 +4469,47 @@ local function buildZonesAndDoors(root: Folder, m: MapSettings)
 	end
 end
 
--- Marks where zombies may spawn.
---
--- IMPORTANT: spawns are generated PER ZONE, not just on one outer ring. With
--- buyable doors closed, a zombie spawned beyond the last opened door cannot
--- path to the players, which would stall the wave forever. Per-zone rings
--- guarantee every wave has reachable spawn points.
-local function buildSpawnPoints(root: Folder, m: MapSettings)
+----------------------------------------------------------------------
+-- Zombie spawn points: hand-placed on open ground per zone
+----------------------------------------------------------------------
+
+local SPAWN_POINTS: { { number } } = {
+	-- Zone 1: south lawn, forecourt and field south edge.
+	{ -30, -88 }, { -8, -108 }, { 12, -114 }, { 32, -112 },
+	{ 55, -108 }, { 78, -100 }, { 100, -92 }, { 116, -78 },
+	-- Zone 2: quadrangle shoulders and the hall forecourt.
+	{ -78, -40 }, { -58, -56 }, { -38, -44 }, { -16, -62 },
+	{ 8, -52 }, { 28, -60 }, { 46, -64 }, { 62, -55 },
+	-- Zone 3: north lawn west pockets and field's north shoulder.
+	{ -110, 18 }, { -80, 52 }, { -58, 58 }, { -44, 36 },
+	{ -14, 55 }, { 2, 42 }, { 20, 55 }, { 26, 30 },
+	-- Zone 4: court lawn, north yard and park edge.
+	{ -112, 80 }, { -90, 112 }, { -66, 92 }, { -45, 104 },
+	{ -25, 120 }, { -7, 108 }, { 12, 75 }, { 30, 68 },
+}
+
+local function buildSpawnPoints(root: Folder)
 	local f = Instance.new("Folder")
 	f.Name = "ZombieSpawnPoints"
 	f.Parent = root
-
-	local perZone = 8
-	local zoneCount: number = m.ZoneCount
-	local half: number = m.ArenaSize / 2
-	local width: number = m.ZoneWidth
-
-	for zone = 1, zoneCount do
-		local zStart: number = -half + width * (zone - 1)
-		local zCenter: number = zStart + width / 2
-
-		for i = 1, perZone do
-			local t = (i - 0.5) / perZone
-			-- Spread across the zone, alternating sides so zombies come from
-			-- both flanks.
-			local side: number = if i % 2 == 0 then -1 else 1
-			local x: number = side * (m.ArenaSize / 2 - 14)
-			local z: number = zStart + (t * width)
-
-			-- Keep at least a little separation from the exact centre lane.
-			if math.abs(z - zCenter) < 6 then
-				z = zCenter + 8
-			end
-			z = math.clamp(z, zStart + 4, zStart + width - 4)
-
-			local p = newPart({
-				Name = string.format("Spawn_Z%d_%d", zone, i),
-				Size = Vector3.new(2, 2, 2),
-				Position = Vector3.new(x, 2, z),
-				Transparency = 1,
-				CanCollide = false,
-				Anchored = true,
-			})
-			p:SetAttribute("Zone", zone)
-			p.Parent = f
+	for i, p in ipairs(SPAWN_POINTS) do
+		local zone = math.floor((p[2] + 130) / 65) + 1
+		if zone < 1 then
+			zone = 1
 		end
+		if zone > 4 then
+			zone = 4
+		end
+		local pt = newPart({
+			Name = string.format("Spawn_Z%d_%d", zone, i),
+			Size = Vector3.new(2, 2, 2),
+			Position = Vector3.new(p[1], 2, p[2]),
+			Transparency = 1,
+			CanCollide = false,
+			Anchored = true,
+		})
+		pt:SetAttribute("Zone", zone)
+		pt.Parent = f
 	end
 end
 
@@ -4394,20 +4522,15 @@ local function buildLightFittings(root: Folder, rand: Random)
 	f.Name = "Ambience"
 	f.Parent = root
 
-	-- Floodlight poles at the pitch corners and around the yard.
 	local poles: { { number } } = {
-		{ 28, 82 }, { 112, 82 }, { 28, 118 }, { 112, 118 },
-		{ -110, -62 }, { 66, -62 }, { -110, 58 }, { 66, 58 },
+		{ 10, -40 }, { 76, -40 }, { 10, 2 }, { 76, 2 },
+		{ -100, -50 }, { 55, -30 },
 	}
 	for i, pole in ipairs(poles) do
-		local groundY: number = 0
-		if pole[2] >= -70 and pole[2] <= 52 then
-			groundY = 0.4
-		end
 		local shaft = newPart({
 			Name = "Floodlight_" .. tostring(i),
 			Size = Vector3.new(0.8, 15, 0.8),
-			Position = Vector3.new(pole[1], groundY + 7.5, pole[2]),
+			Position = Vector3.new(pole[1], 7.5, pole[2]),
 			Material = Enum.Material.Metal,
 			Color = COL_METAL_DARK,
 		})
@@ -4415,7 +4538,7 @@ local function buildLightFittings(root: Folder, rand: Random)
 		local head = newPart({
 			Name = "FloodlightHead_" .. tostring(i),
 			Size = Vector3.new(3, 1.1, 1.4),
-			Position = Vector3.new(pole[1], groundY + 15.4, pole[2]),
+			Position = Vector3.new(pole[1], 15.4, pole[2]),
 			Material = Enum.Material.Neon,
 			Color = Color3.fromRGB(255, 244, 214),
 			CanCollide = false,
@@ -4430,7 +4553,6 @@ local function buildLightFittings(root: Folder, rand: Random)
 		light.Parent = head
 	end
 
-	-- Low mist banks drifting over yard and field edges at night.
 	for i = 1, 10 do
 		local px = rand:Range(-100, 100)
 		local pz = rand:Range(-100, 100)
@@ -4447,7 +4569,6 @@ local function buildLightFittings(root: Folder, rand: Random)
 	end
 end
 
--- Night-time horror mood, fully scripted (no asset dependencies).
 local function buildLighting()
 	local lighting: Lighting = game:GetService("Lighting")
 	lighting.ClockTime = 22.5
@@ -4500,7 +4621,7 @@ end
 -- Player spawn
 ----------------------------------------------------------------------
 
-local function buildPlayerSpawn(m: MapSettings)
+local function buildPlayerSpawn()
 	local ws: Workspace = game:GetService("Workspace")
 	local old = ws:FindFirstChild("PlayerSpawnPad")
 	if old then
@@ -4509,7 +4630,7 @@ local function buildPlayerSpawn(m: MapSettings)
 	local pos: Vector3 = MapBuilder.GetPlayerSpawn()
 	local pad = newPart({
 		Name = "PlayerSpawnPad",
-		Size = Vector3.new(30, 2, 30),
+		Size = Vector3.new(24, 2, 24),
 		Position = Vector3.new(pos.X, 1, pos.Z),
 		Material = Enum.Material.Concrete,
 		Color = Color3.fromRGB(96, 96, 102),
@@ -4517,33 +4638,14 @@ local function buildPlayerSpawn(m: MapSettings)
 	pad.Parent = ws
 end
 
-----------------------------------------------------------------------
--- Spawn helpers (zone maths)
-----------------------------------------------------------------------
-
--- The centre of zone 1 along Z. ZoneCount zones of ZoneWidth are laid out
--- starting at -ArenaSize/2, so zone 1 is the first slab.
-local function zoneCenter(m: MapSettings, zone: number): number
-	local half: number = m.ArenaSize / 2
-	local width: number = m.ZoneWidth
-	return -half + width * (zone - 1) + width / 2
-end
-
--- Where players appear: the arrival parking lot, centre of zone 1.
---
--- CRITICAL: this must be the centre of zone 1, NOT the geometric centre of the
--- arena. The arena is split into zones by solid interior wings, and the arena
--- centre may sit exactly on top of a boundary wall. Spawning there wedges the
--- player inside geometry with every neighbouring door shut and unaffordable —
--- the classic "stuck in a room at game start" bug.
+-- Where players appear: the south lawn's west corner, beside the parking
+-- forecourt of the school (the Uthamra skolväg vista from Street View).
 function MapBuilder.GetPlayerSpawn(): Vector3
-	local m = mapSettings()
-	local z: number = zoneCenter(m, 1)
-	return Vector3.new(0, 6, z)
+	return Vector3.new(-44, 5, -92)
 end
 
--- Kept for compatibility with existing call sites (MapBuilder consumers and
--- ZombieAI's drift fallback both historically read GetCenterSpawn).
+-- Kept for compatibility with existing call sites (ZombieAI's drift
+-- fallback and the player respawn).
 function MapBuilder.GetCenterSpawn(): Vector3
 	return MapBuilder.GetPlayerSpawn()
 end
@@ -4557,19 +4659,23 @@ function MapBuilder.Build(): Folder
 	local rand = RNG.new(m.Seed)
 
 	local root = ensureRoot()
-	buildSite(root, m)
-	buildBuildings(root)
+	buildTerrain(root)
+	buildSchool(root)
+	buildHall(root)
+	buildCafeteria(root)
+	buildOctagon(root)
+	buildRoads(root)
 	buildPitch(root)
 	buildCourt(root)
 	buildParking(root, rand)
-	buildPlayground(root, rand)
 	buildYardProps(root)
 	buildSignage(root)
+	buildVillas(root)
 	buildForest(root, rand)
 	buildBoundary(root, m)
-	buildZonesAndDoors(root, m)
-	buildSpawnPoints(root, m)
-	buildPlayerSpawn(m)
+	buildZoneFences(root, m)
+	buildSpawnPoints(root)
+	buildPlayerSpawn()
 	buildLightFittings(root, rand)
 	buildLighting()
 
